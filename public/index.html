@@ -3,155 +3,350 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>个人私有云仓库</title>
+    <title>Vault One</title>
+    <meta
+      name="description"
+      content="单人私有云仓库，把手机和电脑上的图片、视频、文档与任意文件统一收进同一个可取回的空间。"
+    />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Syne:wght@500;700;800&family=Noto+Sans+SC:wght@400;500;700;900&family=Noto+Serif+SC:wght@500;700;900&display=swap"
+      rel="stylesheet"
+    />
     <link rel="stylesheet" href="/styles.css" />
   </head>
   <body>
+    <div class="ambient ambient--gold"></div>
+    <div class="ambient ambient--cyan"></div>
+    <div class="ambient ambient--violet"></div>
+    <div class="gridVeil"></div>
+    <div class="scanVeil"></div>
+    <div class="noiseVeil"></div>
+    <div class="cursorAura" id="pointerGlow"></div>
+
     <div class="shell">
-      <aside class="hero">
-        <div class="hero__grain"></div>
-        <div class="hero__glow hero__glow--one"></div>
-        <div class="hero__glow hero__glow--two"></div>
-        <div class="eyebrow">Personal Vault</div>
-        <h1>个人私有云仓库</h1>
-        <p class="hero__copy">
-          一个只给自己用的文件仓库。手机、电脑随时上传，按时间找回，直接下载使用。
-        </p>
-        <div class="stats">
-          <div class="stat">
-            <span>文件数</span>
-            <strong id="statTotal">0</strong>
-          </div>
-          <div class="stat">
-            <span>占用空间</span>
-            <strong id="statSize">0 MB</strong>
-          </div>
-          <div class="stat">
-            <span>收藏</span>
-            <strong id="statFav">0</strong>
-          </div>
-        </div>
-        <div class="hero__note">
-          默认单用户、无显式登录。建议部署在私有环境或反向代理之后。
-        </div>
-      </aside>
-
-      <main class="workspace">
-        <section class="toolbar card">
-          <div class="toolbar__group">
-            <div class="field">
-              <label for="deviceName">设备名</label>
-              <input id="deviceName" type="text" placeholder="例如：工作电脑 / 安卓手机" />
-            </div>
-            <div class="field">
-              <label for="searchInput">搜索</label>
-              <input id="searchInput" type="search" placeholder="文件名、备注、标签" />
-            </div>
-          </div>
-          <div class="toolbar__group toolbar__group--actions">
-            <button id="uploadBtn" class="btn btn--primary">上传文件</button>
-            <button id="batchDownloadBtn" class="btn">批量下载</button>
-            <button id="batchDeleteBtn" class="btn">批量删除</button>
-            <input id="fileInput" type="file" multiple hidden />
-          </div>
-        </section>
-
-        <section class="filters card">
-          <div id="typeTabs" class="tabs"></div>
-          <div class="sorts">
-            <select id="sortSelect">
-              <option value="uploadedAt">按时间</option>
-              <option value="size">按大小</option>
-              <option value="name">按名称</option>
-              <option value="favorite">按收藏</option>
-            </select>
-            <button id="orderBtn" class="btn btn--ghost">倒序</button>
-          </div>
-        </section>
-
-        <section class="uploadPanel card">
-          <div class="card__heading">
-            <h2>上传队列</h2>
-            <span id="queueHint">拖拽文件到这里，或点击上传按钮</span>
-          </div>
-          <div id="dropZone" class="dropzone">
+      <button id="layoutModeBtn" class="layoutToggle" type="button" aria-pressed="false">
+        <span class="layoutToggle__icon" aria-hidden="true"></span>
+        <span id="layoutModeText" class="layoutToggle__text">布局模式</span>
+      </button>
+      <header class="hero panel reveal">
+        <div class="hero__mast">
+          <div class="brandLockup">
+            <span class="brandLockup__mark">V1</span>
             <div>
-              <strong>拖拽文件到此处</strong>
-              <p>支持图片、视频、PPT、文档、压缩包等。上传采用分块方式，可重试。</p>
+              <div class="eyebrow">Private Transfer Architecture</div>
+              <strong>Vault One</strong>
             </div>
           </div>
+
+          <div class="hero__chips" aria-label="product highlights">
+            <span>Single-user only</span>
+            <span>No login ritual</span>
+            <span>Cross-device retrieve</span>
+          </div>
+        </div>
+
+        <div class="hero__layout">
+          <section class="hero__copy panelDrift" data-panel-id="hero-copy">
+            <div class="hero__serial">Personal Storage OS / 2026 Release</div>
+            <h1>
+              不再切换聊天软件
+              <br />
+              直接把一切资料
+              <br />
+              收进同一个仓库
+            </h1>
+            <p class="hero__lead">
+              它不是把文件发给别人，而是把你的图片、视频、PPT、压缩包和文本内容，持续归档到一个随时可取回的私人空间。
+              手机上传，电脑即取；电脑上传，手机即看。
+            </p>
+
+            <div class="hero__actions">
+              <button id="uploadBtn" class="btn btn--primary">立即上传</button>
+              <button id="batchDownloadBtn" class="btn btn--secondary">批量下载</button>
+              <button id="batchDeleteBtn" class="btn btn--ghost">批量删除</button>
+            </div>
+          </section>
+
+          <section class="hero__scene motionCard">
+            <div class="hero__rings" aria-hidden="true">
+              <span></span>
+              <span></span>
+              <span></span>
+            </div>
+
+            <article class="sceneCard sceneCard--primary panelDrift" data-panel-id="hero-health">
+              <span>服务状态</span>
+              <strong id="healthBadge">检测中</strong>
+              <p>上传和下载围绕同一个中心仓库存储，不再依赖聊天软件来回中转。</p>
+            </article>
+
+            <article class="sceneCard sceneCard--floating panelDrift" data-panel-id="hero-clock">
+              <span>当前时间</span>
+              <strong id="clockValue">--:--</strong>
+            </article>
+
+            <article class="sceneCard sceneCard--floating alt panelDrift" data-panel-id="hero-filter">
+              <span>当前视图</span>
+              <strong id="filterValue">全部文件</strong>
+            </article>
+
+            <article class="heroDevice panelDrift" data-panel-id="hero-device">
+              <div class="heroDevice__screen">
+                <span class="heroDevice__kicker">Preview Surface</span>
+                <strong>上传轨道、预览舱、资料面板同时在线</strong>
+                <p>一边归档，一边搜索，一边直接取回。</p>
+              </div>
+              <div class="heroDevice__beam heroDevice__beam--one"></div>
+              <div class="heroDevice__beam heroDevice__beam--two"></div>
+            </article>
+          </section>
+        </div>
+
+        <div class="hero__stats">
+          <article class="statBlock panelDrift" data-panel-id="stat-total">
+            <span>仓库文件</span>
+            <strong id="statTotal">0</strong>
+            <small>统一时间线管理</small>
+          </article>
+          <article class="statBlock panelDrift" data-panel-id="stat-size">
+            <span>已占空间</span>
+            <strong id="statSize">0 B</strong>
+            <small>保留原始格式</small>
+          </article>
+          <article class="statBlock panelDrift" data-panel-id="stat-fav">
+            <span>收藏资料</span>
+            <strong id="statFav">0</strong>
+            <small>高频内容直达</small>
+          </article>
+          <article class="statBlock statBlock--accent panelDrift" data-panel-id="stat-result">
+            <span>当前结果</span>
+            <strong id="resultHint">0 个文件</strong>
+            <small id="selectionCount">0 个已选</small>
+          </article>
+        </div>
+
+        <div class="signalRail" aria-hidden="true">
+          <div class="signalRail__track">
+            <span>Upload once</span>
+            <span>Retrieve anywhere</span>
+            <span>Single-user vault</span>
+            <span>Original format preserved</span>
+            <span>Transfer without chat detours</span>
+            <span>Upload once</span>
+            <span>Retrieve anywhere</span>
+            <span>Single-user vault</span>
+            <span>Original format preserved</span>
+            <span>Transfer without chat detours</span>
+          </div>
+        </div>
+      </header>
+
+      <section class="commandRibbon panel reveal panelDrift" data-panel-id="command-ribbon">
+        <div class="commandRibbon__intro">
+          <div class="panelKicker">Command Ribbon</div>
+          <h2>用一个命令带处理整座仓库</h2>
+          <p>这里不是传统后台导航，而是一条固定的操控带。设备标识、选中状态、上传队列和批量动作在同一层完成。</p>
+        </div>
+
+        <div class="commandRibbon__field">
+          <label class="field">
+            <span>当前设备名称</span>
+            <input
+              id="deviceName"
+              type="text"
+              placeholder="例如：工作电脑 / 安卓手机 / 家里笔记本"
+            />
+          </label>
+        </div>
+
+        <div class="commandRibbon__signals">
+          <article class="signalCard">
+            <span>上传队列</span>
+            <strong id="queueHint">拖拽文件到下方上传区</strong>
+          </article>
+          <article class="signalCard">
+            <span>已选项目</span>
+            <strong id="selectionCountMirror">0 个已选</strong>
+          </article>
+        </div>
+
+        <div class="commandRibbon__actions">
+          <button id="uploadBtnMirror" class="btn btn--primary">再次上传</button>
+          <button id="batchDownloadBtnMirror" class="btn btn--secondary">下载所选</button>
+          <button id="batchDeleteBtnMirror" class="btn btn--ghost">删除所选</button>
+        </div>
+      </section>
+
+      <main class="world">
+        <section class="searchStage panel reveal panelDrift" data-panel-id="search">
+          <div class="sectionHead">
+            <div>
+              <div class="panelKicker">Finder Engine</div>
+              <h2>检索台</h2>
+            </div>
+            <p>按名称、备注、标签或设备来源把资料从时间洪流里捞出来。</p>
+          </div>
+
+          <div class="searchStage__controls">
+            <label class="field field--wide">
+              <span>搜索仓库</span>
+              <input id="searchInput" type="search" placeholder="文件名、标签、备注、设备名" />
+            </label>
+
+            <label class="field">
+              <span>排序维度</span>
+              <select id="sortSelect">
+                <option value="uploadedAt">按上传时间</option>
+                <option value="size">按文件大小</option>
+                <option value="name">按文件名称</option>
+                <option value="favorite">按收藏优先</option>
+              </select>
+            </label>
+
+            <label class="field">
+              <span>排序方向</span>
+              <button id="orderBtn" class="btn btn--ghost">倒序</button>
+            </label>
+          </div>
+        </section>
+
+        <section class="modeStage panel reveal panelDrift" data-panel-id="mode">
+          <div class="sectionHead">
+            <div>
+              <div class="panelKicker">Mode Matrix</div>
+              <h2>分类视图</h2>
+            </div>
+            <p>在图片、视频、文档、文本、收藏和回收站之间快速切换。</p>
+          </div>
+          <div id="typeTabs" class="tabs"></div>
+        </section>
+
+        <section class="uploadStage panel reveal panelDrift" data-panel-id="upload">
+          <div class="uploadStage__top">
+            <div class="sectionHead">
+              <div>
+                <div class="panelKicker">Transfer Chamber</div>
+                <h2>上传轨道</h2>
+              </div>
+              <p>支持大文件分块上传。失败后可重试，完成后自动进入统一仓库。</p>
+            </div>
+
+            <div id="dropZone" class="dropZone">
+              <div class="dropZone__core"></div>
+              <div class="dropZone__content">
+                <strong>把文件直接抛进这里</strong>
+                <p>图片、视频、PPT、压缩包、PDF、文本或任意文件都可以进入上传队列。</p>
+              </div>
+            </div>
+          </div>
+
           <div id="queueList" class="queue"></div>
         </section>
 
-        <section class="library card">
-          <div class="card__heading">
-            <h2>文件仓库</h2>
-            <span id="resultHint">0 个文件</span>
+        <section class="archiveStage panel reveal panelDrift" data-panel-id="archive">
+          <div class="sectionHead">
+            <div>
+              <div class="panelKicker">Archive Flow</div>
+              <h2>仓库清单</h2>
+            </div>
+            <p>文件列表被重新设计成内容牌面，不再像表格，而像一个可浏览、可筛选、可预览的资料流。</p>
           </div>
+
           <div id="fileList" class="fileList"></div>
         </section>
-      </main>
 
-      <aside class="preview card" id="previewPanel">
-        <div class="card__heading">
-          <h2>详情预览</h2>
-          <button id="closePreviewBtn" class="btn btn--ghost preview__close">关闭</button>
-        </div>
-        <div id="previewEmpty" class="preview__empty">
-          选择一个文件查看预览、备注、标签与操作。
-        </div>
-        <div id="previewContent" class="preview__content hidden">
-          <div id="previewMedia" class="preview__media"></div>
-          <div class="preview__meta">
-            <div class="metaRow"><span>名称</span><strong id="metaName"></strong></div>
-            <div class="metaRow"><span>时间</span><strong id="metaTime"></strong></div>
-            <div class="metaRow"><span>大小</span><strong id="metaSize"></strong></div>
-            <div class="metaRow"><span>类型</span><strong id="metaType"></strong></div>
-            <div class="metaRow"><span>设备</span><strong id="metaDevice"></strong></div>
+        <aside class="preview panel reveal panelDrift" id="previewPanel" data-panel-id="preview">
+          <div class="preview__head">
+            <div>
+              <div class="panelKicker">Preview Capsule</div>
+              <h2>文件检查器</h2>
+            </div>
+            <button id="closePreviewBtn" class="btn btn--ghost preview__close">关闭</button>
           </div>
-          <div class="editor">
-            <label>
-              备注
-              <textarea id="noteInput" rows="4" placeholder="写点备注，方便以后搜索"></textarea>
-            </label>
-            <label>
-              标签
-              <input id="tagsInput" type="text" placeholder="用逗号分隔，例如：工作, 备份, 临时" />
-            </label>
-            <div class="editor__actions">
-              <button id="saveMetaBtn" class="btn btn--primary">保存</button>
-              <button id="favoriteBtn" class="btn">收藏</button>
-              <button id="downloadBtn" class="btn">下载</button>
-              <button id="deleteBtn" class="btn btn--danger">删除</button>
-              <button id="restoreBtn" class="btn btn--ghost hidden">恢复</button>
-              <button id="purgeBtn" class="btn btn--ghost hidden">永久删除</button>
+
+          <div id="previewEmpty" class="preview__empty">
+            点击任意文件卡片后，这里会显示在线预览、时间、大小、来源设备、备注、标签和文件操作。
+          </div>
+
+          <div id="previewContent" class="preview__content hidden">
+            <div id="previewMedia" class="preview__media"></div>
+
+            <div class="metaPanel">
+              <div class="metaRow">
+                <span>文件名称</span>
+                <strong id="metaName"></strong>
+              </div>
+              <div class="metaRow">
+                <span>上传时间</span>
+                <strong id="metaTime"></strong>
+              </div>
+              <div class="metaRow">
+                <span>文件大小</span>
+                <strong id="metaSize"></strong>
+              </div>
+              <div class="metaRow">
+                <span>文件类型</span>
+                <strong id="metaType"></strong>
+              </div>
+              <div class="metaRow">
+                <span>来源设备</span>
+                <strong id="metaDevice"></strong>
+              </div>
+            </div>
+
+            <div class="editor">
+              <label class="field">
+                <span>备注</span>
+                <textarea id="noteInput" rows="4" placeholder="记录这个文件的用途、场景或上下文"></textarea>
+              </label>
+
+              <label class="field">
+                <span>标签</span>
+                <input id="tagsInput" type="text" placeholder="用逗号分隔，例如：工作, 提案, 手机上传" />
+              </label>
+
+              <div class="editor__actions">
+                <button id="saveMetaBtn" class="btn btn--primary">保存修改</button>
+                <button id="favoriteBtn" class="btn btn--secondary">加入收藏</button>
+                <button id="downloadBtn" class="btn btn--ghost">下载文件</button>
+                <button id="deleteBtn" class="btn btn--danger">移入回收站</button>
+                <button id="restoreBtn" class="btn btn--secondary hidden">恢复文件</button>
+                <button id="purgeBtn" class="btn btn--ghost hidden">永久删除</button>
+              </div>
             </div>
           </div>
-        </div>
-      </aside>
+        </aside>
+      </main>
+
+      <input id="fileInput" type="file" multiple hidden />
     </div>
 
     <div id="toast" class="toast hidden"></div>
 
     <template id="fileCardTemplate">
-      <article class="fileCard">
+      <article class="fileCard motionCard">
         <label class="fileCard__check">
           <input type="checkbox" class="selectFile" />
         </label>
         <button class="fileCard__main" type="button">
+          <div class="fileCard__glow" aria-hidden="true"></div>
           <div class="fileCard__icon"></div>
           <div class="fileCard__body">
-            <div class="fileCard__title"></div>
+            <div class="fileCard__top">
+              <div class="fileCard__title"></div>
+              <div class="fileCard__fav"></div>
+            </div>
             <div class="fileCard__meta"></div>
             <div class="fileCard__tags"></div>
           </div>
-          <div class="fileCard__fav"></div>
         </button>
       </article>
     </template>
 
     <template id="queueItemTemplate">
-      <article class="queueItem">
+      <article class="queueItem motionCard">
         <div class="queueItem__header">
           <div>
             <strong class="queueItem__name"></strong>

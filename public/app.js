@@ -5,7 +5,12 @@ const appState = {
     total: 0,
     size: 0,
     favorites: 0,
+    trash: 0,
     counts: {},
+  },
+  health: {
+    ok: false,
+    storage: "local",
   },
   activeType: "all",
   query: "",
@@ -16,6 +21,7 @@ const appState = {
   deviceName: localStorage.getItem("vaultDeviceName") || "",
   uploadQueue: [],
   uploading: false,
+  layoutEditing: false,
 };
 
 const elements = {
@@ -23,17 +29,25 @@ const elements = {
   statSize: document.getElementById("statSize"),
   statFav: document.getElementById("statFav"),
   resultHint: document.getElementById("resultHint"),
+  queueHint: document.getElementById("queueHint"),
+  selectionCount: document.getElementById("selectionCount"),
+  selectionCountMirror: document.getElementById("selectionCountMirror"),
+  healthBadge: document.getElementById("healthBadge"),
+  clockValue: document.getElementById("clockValue"),
+  filterValue: document.getElementById("filterValue"),
   fileList: document.getElementById("fileList"),
   queueList: document.getElementById("queueList"),
-  queueHint: document.getElementById("queueHint"),
   typeTabs: document.getElementById("typeTabs"),
   searchInput: document.getElementById("searchInput"),
   sortSelect: document.getElementById("sortSelect"),
   orderBtn: document.getElementById("orderBtn"),
   uploadBtn: document.getElementById("uploadBtn"),
+  uploadBtnMirror: document.getElementById("uploadBtnMirror"),
   fileInput: document.getElementById("fileInput"),
   batchDownloadBtn: document.getElementById("batchDownloadBtn"),
+  batchDownloadBtnMirror: document.getElementById("batchDownloadBtnMirror"),
   batchDeleteBtn: document.getElementById("batchDeleteBtn"),
+  batchDeleteBtnMirror: document.getElementById("batchDeleteBtnMirror"),
   dropZone: document.getElementById("dropZone"),
   deviceName: document.getElementById("deviceName"),
   previewPanel: document.getElementById("previewPanel"),
@@ -55,13 +69,16 @@ const elements = {
   restoreBtn: document.getElementById("restoreBtn"),
   purgeBtn: document.getElementById("purgeBtn"),
   toast: document.getElementById("toast"),
+  pointerGlow: document.getElementById("pointerGlow"),
+  layoutModeBtn: document.getElementById("layoutModeBtn"),
+  layoutModeText: document.getElementById("layoutModeText"),
 };
 
 const fileCardTemplate = document.getElementById("fileCardTemplate");
 const queueItemTemplate = document.getElementById("queueItemTemplate");
 
 const typeTabs = [
-  { key: "all", label: "全部" },
+  { key: "all", label: "全部文件" },
   { key: "image", label: "图片" },
   { key: "video", label: "视频" },
   { key: "document", label: "文档" },
@@ -72,21 +89,37 @@ const typeTabs = [
 ];
 
 const groupIcons = {
-  image: "I",
-  video: "V",
-  document: "D",
-  text: "T",
-  other: "F",
+  image: "IMG",
+  video: "VID",
+  document: "DOC",
+  text: "TXT",
+  other: "ZIP",
 };
+
+const groupAccents = {
+  image: "#f4c274",
+  video: "#78f0ff",
+  document: "#8ff1b5",
+  text: "#ff8e89",
+  other: "#9a82ff",
+};
+
+const panelOffsetStorageKey = "vaultPanelOffsets";
 
 boot();
 
 async function boot() {
   elements.deviceName.value = appState.deviceName;
+  elements.orderBtn.textContent = "倒序";
   bindEvents();
+  startClock();
+  startPointerEffects();
+  startRevealObserver();
+  setupLayoutEditing();
   renderTabs();
-  await refreshFiles();
   renderQueue();
+  await loadHealth();
+  await refreshFiles();
 }
 
 function bindEvents() {
@@ -112,6 +145,7 @@ function bindEvents() {
   });
 
   elements.uploadBtn.addEventListener("click", () => elements.fileInput.click());
+  elements.uploadBtnMirror.addEventListener("click", () => elements.fileInput.click());
   elements.fileInput.addEventListener("change", async (event) => {
     const files = Array.from(event.target.files || []);
     await queueFiles(files);
@@ -119,7 +153,9 @@ function bindEvents() {
   });
 
   elements.batchDownloadBtn.addEventListener("click", downloadSelectedFiles);
+  elements.batchDownloadBtnMirror.addEventListener("click", downloadSelectedFiles);
   elements.batchDeleteBtn.addEventListener("click", deleteSelectedFiles);
+  elements.batchDeleteBtnMirror.addEventListener("click", deleteSelectedFiles);
   elements.closePreviewBtn.addEventListener("click", closePreview);
   elements.saveMetaBtn.addEventListener("click", saveActiveMetadata);
   elements.favoriteBtn.addEventListener("click", toggleActiveFavorite);
@@ -127,6 +163,7 @@ function bindEvents() {
   elements.deleteBtn.addEventListener("click", deleteActiveFile);
   elements.restoreBtn.addEventListener("click", restoreActiveFile);
   elements.purgeBtn.addEventListener("click", purgeActiveFile);
+  elements.layoutModeBtn.addEventListener("click", toggleLayoutEditing);
 
   for (const eventName of ["dragenter", "dragover"]) {
     elements.dropZone.addEventListener(eventName, (event) => {
@@ -154,20 +191,271 @@ function bindEvents() {
   });
 }
 
+function startPointerEffects() {
+  const root = document.documentElement;
+
+  const updatePointer = (clientX, clientY) => {
+    const xPercent = (clientX / window.innerWidth) * 100;
+    const yPercent = (clientY / window.innerHeight) * 100;
+    root.style.setProperty("--pointer-x", `${xPercent}%`);
+    root.style.setProperty("--pointer-y", `${yPercent}%`);
+    root.style.setProperty("--motion-x", `${(xPercent - 50) * 0.18}px`);
+    root.style.setProperty("--motion-y", `${(yPercent - 50) * 0.12}px`);
+  };
+
+  window.addEventListener("mousemove", (event) => {
+    updatePointer(event.clientX, event.clientY);
+    applyTilt(event);
+  });
+
+  window.addEventListener(
+    "touchmove",
+    (event) => {
+      const touch = event.touches[0];
+      if (!touch) return;
+      updatePointer(touch.clientX, touch.clientY);
+    },
+    { passive: true }
+  );
+
+  document.addEventListener("mouseleave", resetTilt);
+}
+
+function applyTilt(event) {
+  document.querySelectorAll(".motionCard").forEach((card) => {
+    const rect = card.getBoundingClientRect();
+    if (
+      event.clientX < rect.left ||
+      event.clientX > rect.right ||
+      event.clientY < rect.top ||
+      event.clientY > rect.bottom
+    ) {
+      return;
+    }
+
+    const rotateY = ((event.clientX - rect.left) / rect.width - 0.5) * 6;
+    const rotateX = ((event.clientY - rect.top) / rect.height - 0.5) * -6;
+    card.style.transform = `translateY(-2px) rotateX(${rotateX.toFixed(2)}deg) rotateY(${rotateY.toFixed(2)}deg)`;
+  });
+}
+
+function resetTilt() {
+  document.querySelectorAll(".motionCard").forEach((card) => {
+    card.style.transform = "";
+  });
+}
+
+function startRevealObserver() {
+  const observer = new IntersectionObserver(
+    (entries) => {
+      for (const entry of entries) {
+        if (entry.isIntersecting) {
+          entry.target.classList.add("is-visible");
+          observer.unobserve(entry.target);
+        }
+      }
+    },
+    {
+      threshold: 0.16,
+    }
+  );
+
+  document.querySelectorAll(".reveal").forEach((node) => observer.observe(node));
+}
+
+function setupLayoutEditing() {
+  const savedOffsets = loadPanelOffsets();
+  const panels = [...document.querySelectorAll(".panelDrift[data-panel-id]")];
+
+  for (const panel of panels) {
+    const panelId = panel.dataset.panelId;
+    const saved = savedOffsets[panelId] || { x: 0, y: 0 };
+    applyPanelOffset(panel, saved.x, saved.y);
+
+    const beginDrag = (startX, startY) => {
+      if (!appState.layoutEditing) return;
+
+      const initialX = Number(panel.dataset.dragX || 0);
+      const initialY = Number(panel.dataset.dragY || 0);
+      panel.classList.add("is-dragging");
+
+      const moveTo = (clientX, clientY) => {
+        const nextX = initialX + clientX - startX;
+        const nextY = initialY + clientY - startY;
+        applyPanelOffset(panel, nextX, nextY);
+      };
+
+      const handleMouseMove = (moveEvent) => moveTo(moveEvent.clientX, moveEvent.clientY);
+      const handleTouchMove = (moveEvent) => {
+        const touch = moveEvent.touches[0];
+        if (!touch) return;
+        moveTo(touch.clientX, touch.clientY);
+      };
+
+      const handleEnd = () => {
+        panel.classList.remove("is-dragging");
+        window.removeEventListener("mousemove", handleMouseMove);
+        window.removeEventListener("mouseup", handleEnd);
+        window.removeEventListener("touchmove", handleTouchMove);
+        window.removeEventListener("touchend", handleEnd);
+      };
+
+      window.addEventListener("mousemove", handleMouseMove);
+      window.addEventListener("mouseup", handleEnd, { once: true });
+      window.addEventListener("touchmove", handleTouchMove, { passive: true });
+      window.addEventListener("touchend", handleEnd, { once: true });
+    };
+
+    panel.addEventListener("mousedown", (event) => {
+      if (!appState.layoutEditing) return;
+      if (event.button !== 0) return;
+      event.preventDefault();
+      beginDrag(event.clientX, event.clientY);
+    });
+
+    panel.addEventListener(
+      "touchstart",
+      (event) => {
+        if (!appState.layoutEditing) return;
+        const touch = event.touches[0];
+        if (!touch) return;
+        beginDrag(touch.clientX, touch.clientY);
+      },
+      { passive: true }
+    );
+  }
+
+  window.addEventListener("resize", () => {
+    if (appState.layoutEditing) return;
+    syncLayoutModeButton();
+  });
+
+  syncLayoutModeButton();
+}
+
+function applyPanelOffset(panel, x, y, syncDataset = true) {
+  panel.style.setProperty("--drag-x", `${x}px`);
+  panel.style.setProperty("--drag-y", `${y}px`);
+  if (!syncDataset) return;
+  panel.dataset.dragX = String(x);
+  panel.dataset.dragY = String(y);
+}
+
+function loadPanelOffsets() {
+  try {
+    return JSON.parse(localStorage.getItem(panelOffsetStorageKey) || "{}");
+  } catch (error) {
+    return {};
+  }
+}
+
+function persistPanelOffset(panelId, x, y) {
+  const offsets = loadPanelOffsets();
+  offsets[panelId] = { x, y };
+  localStorage.setItem(panelOffsetStorageKey, JSON.stringify(offsets));
+}
+
+function persistAllPanelOffsets() {
+  const offsets = {};
+  for (const panel of document.querySelectorAll(".panelDrift[data-panel-id]")) {
+    offsets[panel.dataset.panelId] = {
+      x: Number(panel.dataset.dragX || 0),
+      y: Number(panel.dataset.dragY || 0),
+    };
+  }
+  localStorage.setItem(panelOffsetStorageKey, JSON.stringify(offsets));
+}
+
+function toggleLayoutEditing() {
+  appState.layoutEditing = !appState.layoutEditing;
+  document.body.classList.toggle("is-layout-editing", appState.layoutEditing);
+
+  if (!appState.layoutEditing) {
+    persistAllPanelOffsets();
+    toast("布局已保存");
+  } else {
+    toast("已进入布局模式，可拖动任意模块");
+  }
+
+  syncLayoutModeButton();
+}
+
+function syncLayoutModeButton() {
+  elements.layoutModeBtn.classList.toggle("is-active", appState.layoutEditing);
+  elements.layoutModeBtn.setAttribute("aria-pressed", String(appState.layoutEditing));
+  elements.layoutModeText.textContent = appState.layoutEditing ? "保存布局" : "布局模式";
+}
+
+async function loadHealth() {
+  try {
+    const health = await apiJson("/api/health");
+    appState.health.ok = Boolean(health.ok);
+    appState.health.storage = health.storage || "local";
+  } catch (error) {
+    appState.health.ok = false;
+    appState.health.storage = "unreachable";
+  }
+
+  renderHealth();
+}
+
+function renderHealth() {
+  let label = "连接异常";
+
+  if (appState.health.ok) {
+    if (appState.health.storage === "s3") label = "对象存储在线";
+    else if (appState.health.storage === "local") label = "本地存储在线";
+    else label = "服务在线";
+  }
+
+  elements.healthBadge.textContent = label;
+  document.body.dataset.storage = appState.health.storage;
+}
+
+function startClock() {
+  updateClock();
+  setInterval(updateClock, 1000);
+}
+
+function updateClock() {
+  elements.clockValue.textContent = new Intl.DateTimeFormat("zh-CN", {
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(new Date());
+}
+
 function renderTabs() {
   elements.typeTabs.innerHTML = "";
+
   for (const tab of typeTabs) {
     const button = document.createElement("button");
     button.type = "button";
     button.className = `tab ${tab.key === appState.activeType ? "is-active" : ""}`;
-    button.textContent = tab.label;
+
+    const label = document.createElement("span");
+    label.textContent = tab.label;
+    button.appendChild(label);
+
+    const count = document.createElement("span");
+    count.className = "tab__count";
+    count.textContent = String(getTabCount(tab.key));
+    button.appendChild(count);
+
     button.addEventListener("click", async () => {
       appState.activeType = tab.key;
       renderTabs();
       await refreshFiles();
     });
+
     elements.typeTabs.appendChild(button);
   }
+}
+
+function getTabCount(key) {
+  if (key === "all") return appState.stats.total || 0;
+  if (key === "favorite") return appState.stats.favorites || 0;
+  if (key === "trash") return appState.stats.trash || 0;
+  return (appState.stats.counts && appState.stats.counts[key]) || 0;
 }
 
 async function refreshFiles() {
@@ -181,9 +469,18 @@ async function refreshFiles() {
 
   const data = await apiJson(`/api/files?${params.toString()}`);
   appState.files = data.files || [];
-  appState.stats = data.stats || appState.stats;
+  appState.stats = {
+    total: 0,
+    size: 0,
+    favorites: 0,
+    trash: 0,
+    counts: {},
+    ...(data.stats || {}),
+  };
   appState.filteredFiles = filterFilesForView();
+  cleanupSelection();
 
+  renderTabs();
   renderStats();
   renderFileList();
   updatePreview();
@@ -196,21 +493,27 @@ function filterFilesForView() {
     if (file.deletedAt) return false;
     if (appState.activeType !== "all" && file.group !== appState.activeType) return false;
 
-    if (appState.query) {
-      const blob = [
-        file.originalName,
-        file.note,
-        ...(file.tags || []),
-        file.deviceName,
-        file.groupLabel,
-      ]
-        .join(" ")
-        .toLowerCase();
-      return blob.includes(appState.query.toLowerCase());
-    }
+    if (!appState.query) return true;
 
-    return true;
+    const haystack = [
+      file.originalName,
+      file.note,
+      ...(file.tags || []),
+      file.deviceName,
+      file.groupLabel,
+    ]
+      .join(" ")
+      .toLowerCase();
+
+    return haystack.includes(appState.query.toLowerCase());
   });
+}
+
+function cleanupSelection() {
+  const ids = new Set(appState.files.map((file) => file.id));
+  for (const id of appState.selectedIds) {
+    if (!ids.has(id)) appState.selectedIds.delete(id);
+  }
 }
 
 function renderStats() {
@@ -218,9 +521,17 @@ function renderStats() {
   elements.statSize.textContent = formatBytes(appState.stats.size || 0);
   elements.statFav.textContent = String(appState.stats.favorites || 0);
   elements.resultHint.textContent = `${appState.filteredFiles.length} 个文件`;
+  elements.selectionCount.textContent = `${appState.selectedIds.size} 个已选`;
+  elements.selectionCountMirror.textContent = `${appState.selectedIds.size} 个已选`;
   elements.queueHint.textContent = appState.uploadQueue.length
-    ? `${appState.uploadQueue.length} 个文件待上传`
-    : "拖拽文件到这里，或点击上传按钮";
+    ? `${appState.uploadQueue.length} 个文件等待处理`
+    : "拖拽文件到下方上传区";
+  elements.filterValue.textContent = getFilterLabel();
+}
+
+function getFilterLabel() {
+  const active = typeTabs.find((tab) => tab.key === appState.activeType);
+  return active ? active.label : "全部文件";
 }
 
 function renderFileList() {
@@ -228,8 +539,8 @@ function renderFileList() {
 
   if (!appState.filteredFiles.length) {
     const empty = document.createElement("div");
-    empty.className = "preview__empty";
-    empty.textContent = "这里还没有文件。先上传一个图片、视频或文档。";
+    empty.className = "emptyState";
+    empty.textContent = "当前筛选条件下还没有文件。你可以先上传图片、视频、PPT、PDF 或任意文件来建立你的第一批资料。";
     elements.fileList.appendChild(empty);
     return;
   }
@@ -245,17 +556,27 @@ function renderFileList() {
     const favorite = fragment.querySelector(".fileCard__fav");
     const checkbox = fragment.querySelector(".selectFile");
 
-    icon.textContent = groupIcons[file.group] || "F";
+    const accent = groupAccents[file.group] || groupAccents.other;
+    card.style.setProperty("--accent", accent);
+
+    icon.textContent = groupIcons[file.group] || groupIcons.other;
     title.textContent = file.originalName;
-    meta.textContent = `${formatDate(file.uploadedAt)} · ${formatBytes(file.size)} · ${file.groupLabel} · ${file.deviceName || "未知设备"}`;
+    meta.textContent = [
+      formatDate(file.uploadedAt),
+      formatBytes(file.size),
+      file.groupLabel,
+      file.deviceName || "未知设备",
+    ].join(" · ");
     favorite.textContent = file.favorite ? "★" : "☆";
     checkbox.checked = appState.selectedIds.has(file.id);
     card.classList.toggle("is-selected", checkbox.checked);
+    card.classList.toggle("is-deleted", Boolean(file.deletedAt));
 
     const labels = [];
     if (file.favorite) labels.push("收藏");
     if (file.deletedAt) labels.push("已删除");
-    for (const tag of (file.tags || []).slice(0, 3)) labels.push(tag);
+    for (const tag of (file.tags || []).slice(0, 4)) labels.push(tag);
+
     tags.innerHTML = "";
     for (const label of labels) {
       const node = document.createElement("span");
@@ -268,6 +589,7 @@ function renderFileList() {
       if (checkbox.checked) appState.selectedIds.add(file.id);
       else appState.selectedIds.delete(file.id);
       card.classList.toggle("is-selected", checkbox.checked);
+      renderStats();
     });
 
     mainButton.addEventListener("click", () => openPreview(file.id));
@@ -291,27 +613,30 @@ function openPreview(fileId) {
   elements.metaDevice.textContent = file.deviceName || "未知设备";
   elements.noteInput.value = file.note || "";
   elements.tagsInput.value = (file.tags || []).join(", ");
-  elements.favoriteBtn.textContent = file.favorite ? "取消收藏" : "收藏";
+  elements.favoriteBtn.textContent = file.favorite ? "取消收藏" : "加入收藏";
   elements.deleteBtn.classList.toggle("hidden", Boolean(file.deletedAt));
   elements.restoreBtn.classList.toggle("hidden", !file.deletedAt);
   elements.purgeBtn.classList.toggle("hidden", !file.deletedAt);
 
   renderPreviewMedia(file);
 
-  if (window.innerWidth <= 900) {
+  if (window.innerWidth <= 720) {
     elements.previewPanel.scrollTop = 0;
   }
 }
 
 function closePreview() {
+  appState.activeFileId = null;
   elements.previewPanel.classList.remove("is-open");
+  elements.previewContent.classList.add("hidden");
+  elements.previewEmpty.classList.remove("hidden");
+  elements.previewMedia.innerHTML = "";
 }
 
 function updatePreview() {
   if (!appState.activeFileId) return;
   const file = getActiveFile(appState.activeFileId);
   if (!file) {
-    appState.activeFileId = null;
     closePreview();
     return;
   }
@@ -343,9 +668,9 @@ async function renderPreviewMedia(file) {
     const pre = document.createElement("pre");
     try {
       const response = await fetch(`/api/files/${file.id}/preview`);
-      pre.textContent = (await response.text()).slice(0, 20000) || "(空文本)";
-    } catch {
-      pre.textContent = "文本预览不可用，请直接下载。";
+      pre.textContent = (await response.text()).slice(0, 20000) || "(空文件)";
+    } catch (error) {
+      pre.textContent = "文本预览暂时不可用，请直接下载原文件。";
     }
     elements.previewMedia.appendChild(pre);
     return;
@@ -361,7 +686,7 @@ async function renderPreviewMedia(file) {
 
   const fallback = document.createElement("div");
   fallback.className = "preview__empty";
-  fallback.textContent = "这个文件类型暂不提供内嵌预览，可以直接下载。";
+  fallback.textContent = "这个文件类型暂不支持内嵌预览，但仍然可以直接下载原文件。";
   elements.previewMedia.appendChild(fallback);
 }
 
@@ -378,7 +703,7 @@ async function saveActiveMetadata() {
     }),
   });
 
-  toast("已保存备注和标签");
+  toast("备注和标签已保存");
   await refreshFiles();
 }
 
@@ -392,7 +717,7 @@ async function toggleActiveFavorite() {
     body: JSON.stringify({ favorite: !file.favorite }),
   });
 
-  toast(file.favorite ? "已取消收藏" : "已收藏");
+  toast(file.favorite ? "已取消收藏" : "已加入收藏");
   await refreshFiles();
 }
 
@@ -408,7 +733,7 @@ async function deleteActiveFile() {
   if (!window.confirm(`确定将「${file.originalName}」移入回收站吗？`)) return;
 
   await apiJson(`/api/files/${file.id}`, { method: "DELETE" });
-  toast("已移入回收站");
+  toast("文件已移入回收站");
   await refreshFiles();
 }
 
@@ -417,7 +742,7 @@ async function restoreActiveFile() {
   if (!file) return;
 
   await apiJson(`/api/files/${file.id}/restore`, { method: "POST" });
-  toast("已恢复文件");
+  toast("文件已恢复");
   await refreshFiles();
 }
 
@@ -427,7 +752,7 @@ async function purgeActiveFile() {
   if (!window.confirm(`永久删除「${file.originalName}」后无法恢复，确定继续吗？`)) return;
 
   await apiJson(`/api/files/${file.id}/permanent`, { method: "DELETE" });
-  toast("已永久删除");
+  toast("文件已永久删除");
   await refreshFiles();
 }
 
@@ -437,7 +762,7 @@ async function queueFiles(files) {
   for (const file of files) {
     appState.uploadQueue.push({
       file,
-      status: "waiting",
+      status: "等待上传",
       progress: 0,
       error: "",
     });
@@ -450,19 +775,19 @@ async function queueFiles(files) {
   appState.uploading = true;
   try {
     for (const item of appState.uploadQueue) {
-      if (item.status === "done") continue;
-      item.status = "uploading";
+      if (item.status === "上传完成") continue;
+      item.status = "上传中";
       item.error = "";
       renderQueue();
 
       try {
         await uploadFileWithChunks(item);
-        item.status = "done";
+        item.status = "上传完成";
         item.progress = 100;
         toast(`已上传：${item.file.name}`);
         await refreshFiles();
       } catch (error) {
-        item.status = "error";
+        item.status = "上传失败";
         item.error = error.message || "上传失败";
       }
 
@@ -470,7 +795,7 @@ async function queueFiles(files) {
     }
   } finally {
     appState.uploading = false;
-    appState.uploadQueue = appState.uploadQueue.filter((item) => item.status !== "done");
+    appState.uploadQueue = appState.uploadQueue.filter((item) => item.status !== "上传完成");
     renderQueue();
   }
 }
@@ -480,8 +805,8 @@ function renderQueue() {
 
   if (!appState.uploadQueue.length) {
     const empty = document.createElement("div");
-    empty.className = "preview__empty";
-    empty.textContent = "没有正在上传的文件。";
+    empty.className = "emptyState";
+    empty.textContent = "当前没有正在处理的上传任务。你可以直接拖入文件，系统会自动进入上传队列。";
     elements.queueList.appendChild(empty);
     renderStats();
     return;
@@ -490,10 +815,12 @@ function renderQueue() {
   for (const item of appState.uploadQueue) {
     const fragment = queueItemTemplate.content.cloneNode(true);
     fragment.querySelector(".queueItem__name").textContent = item.file.name;
-    fragment.querySelector(".queueItem__meta").textContent =
-      `${formatBytes(item.file.size)} · ${item.file.type || "application/octet-stream"}`;
+    fragment.querySelector(".queueItem__meta").textContent = [
+      formatBytes(item.file.size),
+      item.file.type || "application/octet-stream",
+    ].join(" · ");
     fragment.querySelector(".queueItem__status").textContent =
-      item.status === "error" ? item.error : item.status;
+      item.status === "上传失败" ? item.error : item.status;
     fragment.querySelector(".progress__bar").style.width = `${item.progress}%`;
     elements.queueList.appendChild(fragment);
   }
@@ -542,17 +869,13 @@ async function uploadFileWithChunks(item, forceFresh = false) {
 
       if (response.status === 404) {
         clearLocalUploadSession(fingerprint);
-        if (forceFresh) {
-          throw new Error("Upload session expired");
-        }
+        if (forceFresh) throw new Error("上传会话已失效");
         return uploadFileWithChunks(item, true);
       }
 
       const payload = await safeJson(response);
-      if (attempt === 2) {
-        throw new Error(payload.error || "Chunk upload failed");
-      }
-      await wait(250 * (attempt + 1));
+      if (attempt === 2) throw new Error(payload.error || "分块上传失败");
+      await wait(300 * (attempt + 1));
     }
   }
 
@@ -563,13 +886,11 @@ async function uploadFileWithChunks(item, forceFresh = false) {
   if (!completeResponse.ok) {
     if (completeResponse.status === 404) {
       clearLocalUploadSession(fingerprint);
-      if (forceFresh) {
-        throw new Error("Upload session expired");
-      }
+      if (forceFresh) throw new Error("上传会话已失效");
       return uploadFileWithChunks(item, true);
     }
     const payload = await safeJson(completeResponse);
-    throw new Error(payload.error || "Upload finalize failed");
+    throw new Error(payload.error || "上传合并失败");
   }
 
   clearLocalUploadSession(fingerprint);
@@ -612,8 +933,8 @@ async function getUploadSession(file, fingerprint, chunkSize, forceFresh = false
       size: file.size,
       mimeType: file.type,
       lastModified: file.lastModified,
-      deviceName: appState.deviceName || "This device",
-      source: /Android/i.test(navigator.userAgent) ? "mobile" : "web",
+      deviceName: appState.deviceName || "当前设备",
+      source: /Android|iPhone/i.test(navigator.userAgent) ? "mobile" : "web",
       note: "",
       tags: [],
       chunkSize,
@@ -622,7 +943,7 @@ async function getUploadSession(file, fingerprint, chunkSize, forceFresh = false
 
   if (!initResponse.ok) {
     const payload = await safeJson(initResponse);
-    throw new Error(payload.error || "Upload init failed");
+    throw new Error(payload.error || "上传初始化失败");
   }
 
   const session = await initResponse.json();
@@ -655,7 +976,7 @@ function clearLocalUploadSession(fingerprint) {
 async function downloadSelectedFiles() {
   const ids = [...appState.selectedIds];
   if (!ids.length) {
-    toast("先勾选要下载的文件");
+    toast("请先勾选要下载的文件");
     return;
   }
 
@@ -664,17 +985,17 @@ async function downloadSelectedFiles() {
     await wait(180);
   }
 
-  toast(`已发起 ${ids.length} 个下载`);
+  toast(`已发起 ${ids.length} 个下载任务`);
 }
 
 async function deleteSelectedFiles() {
   const ids = [...appState.selectedIds];
   if (!ids.length) {
-    toast("先勾选要删除的文件");
+    toast("请先勾选要删除的文件");
     return;
   }
 
-  if (!window.confirm(`确定将 ${ids.length} 个文件移入回收站吗？`)) return;
+  if (!window.confirm(`确定把 ${ids.length} 个文件移入回收站吗？`)) return;
 
   await apiJson("/api/files/bulk-delete", {
     method: "POST",
@@ -683,7 +1004,7 @@ async function deleteSelectedFiles() {
   });
 
   appState.selectedIds.clear();
-  toast("已批量删除");
+  toast("批量删除完成");
   await refreshFiles();
 }
 
@@ -713,7 +1034,7 @@ async function apiJson(url, options = {}) {
 async function safeJson(response) {
   try {
     return await response.json();
-  } catch {
+  } catch (error) {
     return {};
   }
 }
