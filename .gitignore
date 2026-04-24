@@ -1,0 +1,12 @@
+node_modules/
+data/
+storage/
+.npm-cache/
+_automation/
+_chrome_automation/
+server.out.log
+server.err.log
+tunnel.out.log
+tunnel.err.log
+.DS_Store
+*.log
