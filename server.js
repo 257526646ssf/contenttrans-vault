@@ -23,6 +23,7 @@ const S3_BUCKET = String(process.env.S3_BUCKET || "").trim();
 const S3_ACCESS_KEY_ID = String(process.env.S3_ACCESS_KEY_ID || "").trim();
 const S3_SECRET_ACCESS_KEY = String(process.env.S3_SECRET_ACCESS_KEY || "").trim();
 const S3_PUBLIC_BASE_URL = String(process.env.S3_PUBLIC_BASE_URL || "").trim().replace(/\/+$/, "");
+const S3_FORCE_PATH_STYLE = String(process.env.S3_FORCE_PATH_STYLE || "").trim().toLowerCase() === "true";
 
 ensureDirSync(DATA_DIR);
 ensureDirSync(STORAGE_DIR);
@@ -104,7 +105,7 @@ function createStorage() {
     const client = new S3Client({
       region: S3_REGION,
       endpoint: S3_ENDPOINT,
-      forcePathStyle: false,
+      forcePathStyle: S3_FORCE_PATH_STYLE,
       credentials: {
         accessKeyId: S3_ACCESS_KEY_ID,
         secretAccessKey: S3_SECRET_ACCESS_KEY,
