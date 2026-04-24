@@ -1,0 +1,14 @@
+{
+  "name": "contenttrans-vault",
+  "version": "1.0.0",
+  "description": "Personal private cloud vault for files, images, video, and documents.",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs"
+}
