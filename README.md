@@ -52,23 +52,26 @@ The app supports two storage modes:
 - `local` (default): store file blobs inside `storage/files`
 - `s3`: store file blobs in an S3-compatible object store such as Backblaze B2
 
-### Backblaze B2 / S3 environment variables
+### S3-compatible storage environment variables
 
 Set these variables when you want object storage instead of local disk:
 
 ```text
 STORAGE_DRIVER=s3
-S3_REGION=us-west-004
-S3_ENDPOINT=https://s3.us-west-004.backblazeb2.com
+S3_REGION=your-region
+S3_ENDPOINT=https://your-s3-endpoint
 S3_BUCKET=your-bucket-name
 S3_ACCESS_KEY_ID=your-key-id
-S3_SECRET_ACCESS_KEY=your-application-key
+S3_SECRET_ACCESS_KEY=your-secret-key
 ```
 
 Optional:
 
 ```text
+S3_FORCE_PATH_STYLE=true
 S3_PUBLIC_BASE_URL=https://f005.backblazeb2.com/file/your-bucket-name
 ```
+
+`S3_FORCE_PATH_STYLE=true` is required for providers such as Supabase Storage S3.
 
 `S3_PUBLIC_BASE_URL` is only used for metadata display. Downloads and previews still stream through the app.
