@@ -3,6 +3,8 @@ const fs = require("fs");
 const path = require("path");
 const crypto = require("crypto");
 const { URL } = require("url");
+const { Readable } = require("stream");
+const { S3Client, DeleteObjectCommand, GetObjectCommand, HeadObjectCommand, PutObjectCommand } = require("@aws-sdk/client-s3");
 
 const PORT = Number(process.env.PORT || 3000);
 const HOST = process.env.HOST || "0.0.0.0";
@@ -14,11 +16,20 @@ const TEMP_DIR = path.join(STORAGE_DIR, "tmp");
 const STATE_FILE = path.join(DATA_DIR, "vault.json");
 const UPLOAD_FILE = path.join(DATA_DIR, "uploads.json");
 const DEFAULT_CHUNK_SIZE = 5 * 1024 * 1024;
+const STORAGE_DRIVER = String(process.env.STORAGE_DRIVER || "local").trim().toLowerCase();
+const S3_REGION = String(process.env.S3_REGION || "").trim();
+const S3_ENDPOINT = String(process.env.S3_ENDPOINT || "").trim();
+const S3_BUCKET = String(process.env.S3_BUCKET || "").trim();
+const S3_ACCESS_KEY_ID = String(process.env.S3_ACCESS_KEY_ID || "").trim();
+const S3_SECRET_ACCESS_KEY = String(process.env.S3_SECRET_ACCESS_KEY || "").trim();
+const S3_PUBLIC_BASE_URL = String(process.env.S3_PUBLIC_BASE_URL || "").trim().replace(/\/+$/, "");
 
 ensureDirSync(DATA_DIR);
 ensureDirSync(STORAGE_DIR);
 ensureDirSync(FILE_DIR);
 ensureDirSync(TEMP_DIR);
+
+const storage = createStorage();
 
 const state = loadJson(STATE_FILE, {
   version: 1,
@@ -48,6 +59,118 @@ const mimeTypes = {
   ".txt": "text/plain; charset=utf-8",
   ".md": "text/markdown; charset=utf-8",
 };
+
+function createStorage() {
+  if (STORAGE_DRIVER === "local") {
+    return {
+      mode: "local",
+      publicBaseUrl: "",
+      async hasContent(file) {
+        return fs.existsSync(path.join(FILE_DIR, file.storedName));
+      },
+      async putObject(storedName, sourcePath, contentType) {
+        const finalPath = path.join(FILE_DIR, storedName);
+        fs.copyFileSync(sourcePath, finalPath);
+        return {
+          storedName,
+          objectKey: storedName,
+          storageDriver: "local",
+          storagePath: finalPath,
+          publicUrl: "",
+          mimeType: contentType || "application/octet-stream",
+        };
+      },
+      async createReadStream(file) {
+        return fs.createReadStream(path.join(FILE_DIR, file.storedName));
+      },
+      async deleteObject(file) {
+        const fullPath = path.join(FILE_DIR, file.storedName);
+        if (fs.existsSync(fullPath)) fs.unlinkSync(fullPath);
+      },
+    };
+  }
+
+  if (STORAGE_DRIVER === "s3") {
+    const missing = [];
+    if (!S3_REGION) missing.push("S3_REGION");
+    if (!S3_ENDPOINT) missing.push("S3_ENDPOINT");
+    if (!S3_BUCKET) missing.push("S3_BUCKET");
+    if (!S3_ACCESS_KEY_ID) missing.push("S3_ACCESS_KEY_ID");
+    if (!S3_SECRET_ACCESS_KEY) missing.push("S3_SECRET_ACCESS_KEY");
+    if (missing.length) {
+      throw new Error(`Missing S3 configuration: ${missing.join(", ")}`);
+    }
+
+    const client = new S3Client({
+      region: S3_REGION,
+      endpoint: S3_ENDPOINT,
+      forcePathStyle: false,
+      credentials: {
+        accessKeyId: S3_ACCESS_KEY_ID,
+        secretAccessKey: S3_SECRET_ACCESS_KEY,
+      },
+    });
+
+    return {
+      mode: "s3",
+      publicBaseUrl: S3_PUBLIC_BASE_URL,
+      async hasContent(file) {
+        try {
+          await client.send(
+            new HeadObjectCommand({
+              Bucket: S3_BUCKET,
+              Key: file.objectKey || file.storedName,
+            })
+          );
+          return true;
+        } catch (error) {
+          if (String(error?.name || "").includes("NotFound") || error?.$metadata?.httpStatusCode === 404) {
+            return false;
+          }
+          throw error;
+        }
+      },
+      async putObject(storedName, sourcePath, contentType) {
+        const objectKey = storedName;
+        await client.send(
+          new PutObjectCommand({
+            Bucket: S3_BUCKET,
+            Key: objectKey,
+            Body: fs.createReadStream(sourcePath),
+            ContentType: contentType || "application/octet-stream",
+          })
+        );
+        return {
+          storedName,
+          objectKey,
+          storageDriver: "s3",
+          storagePath: `s3://${S3_BUCKET}/${objectKey}`,
+          publicUrl: S3_PUBLIC_BASE_URL ? `${S3_PUBLIC_BASE_URL}/${encodeURIComponent(objectKey).replace(/%2F/g, "/")}` : "",
+          mimeType: contentType || "application/octet-stream",
+        };
+      },
+      async createReadStream(file) {
+        const response = await client.send(
+          new GetObjectCommand({
+            Bucket: S3_BUCKET,
+            Key: file.objectKey || file.storedName,
+          })
+        );
+        return toNodeReadable(response.Body);
+      },
+      async deleteObject(file) {
+        await client.send(
+          new DeleteObjectCommand({
+            Bucket: S3_BUCKET,
+            Key: file.objectKey || file.storedName,
+          })
+        );
+      },
+    };
+  }
+
+  throw new Error(`Unsupported STORAGE_DRIVER: ${STORAGE_DRIVER}`);
+}
 
 function ensureDirSync(dir) {
   fs.mkdirSync(dir, { recursive: true });
@@ -154,6 +277,8 @@ function serializeFile(file) {
     favorite: Boolean(file.favorite),
     deletedAt: file.deletedAt || null,
     previewable: Boolean(file.previewable),
+    storageDriver: file.storageDriver || storage.mode,
+    publicUrl: file.publicUrl || "",
   };
 }
 
@@ -265,6 +390,10 @@ function chunkPath(session, index) {
   return path.join(session.sessionDir, `${String(index).padStart(6, "0")}.part`);
 }
 
+function finalUploadTempPath(session) {
+  return path.join(session.sessionDir, "__complete__.upload");
+}
+
 function purgeTempDir(dir) {
   fs.rmSync(dir, { recursive: true, force: true });
 }
@@ -273,11 +402,33 @@ function writeFileBuffer(filePath, buffer) {
   fs.writeFileSync(filePath, buffer);
 }
 
+function toNodeReadable(body) {
+  if (!body) throw new Error("Empty object body");
+  if (typeof body.pipe === "function") return body;
+  if (body instanceof Readable) return body;
+  if (typeof body.transformToWebStream === "function") return Readable.fromWeb(body.transformToWebStream());
+  if (typeof body.getReader === "function") return Readable.fromWeb(body);
+  throw new Error("Unsupported stream body");
+}
+
+async function objectExists(file) {
+  return storage.hasContent(file);
+}
+
+async function sendStoredFile(res, file, disposition) {
+  const stream = await storage.createReadStream(file);
+  res.writeHead(200, {
+    "Content-Type": file.mimeType || "application/octet-stream",
+    "Content-Disposition": `${disposition}; filename*=UTF-8''${encodeURIComponent(file.originalName)}`,
+  });
+  stream.pipe(res);
+}
+
 async function handleApi(req, res, url) {
   const pathname = url.pathname;
 
   if (req.method === "GET" && pathname === "/api/health") {
-    sendJson(res, 200, { ok: true, time: nowIso(), stats: getStats() });
+    sendJson(res, 200, { ok: true, time: nowIso(), stats: getStats(), storage: storage.mode });
     return true;
   }
 
@@ -302,27 +453,19 @@ async function handleApi(req, res, url) {
       return true;
     }
 
-    const fullPath = path.join(FILE_DIR, file.storedName);
-    if (!fs.existsSync(fullPath)) {
+    const exists = await objectExists(file);
+    if (!exists) {
       sendJson(res, 404, { error: "File content missing" });
       return true;
     }
 
     if (action === "download") {
-      res.writeHead(200, {
-        "Content-Type": file.mimeType || "application/octet-stream",
-        "Content-Disposition": `attachment; filename*=UTF-8''${encodeURIComponent(file.originalName)}`,
-      });
-      fs.createReadStream(fullPath).pipe(res);
+      await sendStoredFile(res, file, "attachment");
       return true;
     }
 
     if (action === "preview") {
-      res.writeHead(200, {
-        "Content-Type": file.mimeType || "application/octet-stream",
-        "Content-Disposition": `inline; filename*=UTF-8''${encodeURIComponent(file.originalName)}`,
-      });
-      fs.createReadStream(fullPath).pipe(res);
+      await sendStoredFile(res, file, "inline");
       return true;
     }
 
@@ -368,8 +511,7 @@ async function handleApi(req, res, url) {
     }
 
     if (action === "permanent") {
-      const fullPath = path.join(FILE_DIR, file.storedName);
-      if (fs.existsSync(fullPath)) fs.unlinkSync(fullPath);
+      await storage.deleteObject(file);
       state.files.splice(index, 1);
       persistState();
       sendJson(res, 200, { ok: true });
@@ -552,19 +694,24 @@ async function handleApi(req, res, url) {
     const fileId = safeId();
     const ext = safeExt(session.name);
     const storedName = `${fileId}${ext}`;
-    const finalPath = path.join(FILE_DIR, storedName);
-    const fd = fs.openSync(finalPath, "w");
+    const assembledPath = finalUploadTempPath(session);
+    const fd = fs.openSync(assembledPath, "w");
     for (let i = 0; i < session.totalChunks; i += 1) {
       const buffer = fs.readFileSync(chunkPath(session, i));
       fs.writeSync(fd, buffer);
     }
     fs.closeSync(fd);
+    const stored = await storage.putObject(storedName, assembledPath, session.mimeType);
 
     const group = extToGroup(ext, session.mimeType);
     const fileRecord = {
       id: fileId,
       originalName: normalizeName(session.name),
-      storedName,
+      storedName: stored.storedName,
+      objectKey: stored.objectKey,
+      storageDriver: stored.storageDriver,
+      storagePath: stored.storagePath,
+      publicUrl: stored.publicUrl,
       mimeType: session.mimeType,
       ext,
       group,
