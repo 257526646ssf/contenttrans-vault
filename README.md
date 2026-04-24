@@ -1,38 +1,74 @@
-# 个人私有云仓库
+---
+title: Personal Private Cloud Vault
+emoji: "🗂️"
+colorFrom: blue
+colorTo: teal
+sdk: docker
+app_port: 7860
+---
 
-一个面向单人使用的私有文件仓库 Web MVP，支持：
+# Personal Private Cloud Vault
 
-- 手机、电脑上传
-- 图片 / 视频 / 文档 / 文本 / 其他文件
-- 按时间、类型、名称、大小浏览
-- 在线预览图片、视频、文本、PDF
-- 备注、标签、收藏
-- 回收站
-- 批量下载
-- 分块上传与失败重试
+A single-user private vault for moving files between your own devices without a visible login flow.
 
-## 启动
+## Features
+
+- Upload from phone or desktop
+- Store images, videos, text, PDFs, presentations, archives, and other files
+- Search and filter by time, type, name, and size
+- Preview images, videos, text, and PDF files in the browser
+- Edit notes, tags, favorites, and soft-delete state
+- Chunked uploads with retry support
+
+## Run locally
 
 ```bash
 npm start
 ```
 
-默认地址：
+Default address:
 
 ```text
 http://127.0.0.1:3000
 ```
 
-## 存储位置
+## Storage layout
 
-- 文件内容：`storage/files`
-- 临时分块：`storage/tmp`
-- 元数据：`data/vault.json`
-- 上传会话：`data/uploads.json`
+- File blobs: `storage/files`
+- Temporary chunks: `storage/tmp`
+- File metadata: `data/vault.json`
+- Upload sessions: `data/uploads.json`
 
-## 说明
+## Notes
 
-- 这是一个单用户个人仓库，不包含显式登录界面。
-- 默认建议部署在私有网络、VPN 或反向代理之后。
-- `PPT/PPTX` 当前以下载为主，图片、视频、文本、PDF 可直接预览。
-- 批量下载会按选中顺序逐个触发浏览器下载。
+- This is a personal single-user vault, not a multi-user sharing system.
+- Data stored on ephemeral hosting can be lost when the container restarts.
+- PPT and PPTX currently fall back to download-first behavior instead of full online preview.
+
+## Storage drivers
+
+The app supports two storage modes:
+
+- `local` (default): store file blobs inside `storage/files`
+- `s3`: store file blobs in an S3-compatible object store such as Backblaze B2
+
+### Backblaze B2 / S3 environment variables
+
+Set these variables when you want object storage instead of local disk:
+
+```text
+STORAGE_DRIVER=s3
+S3_REGION=us-west-004
+S3_ENDPOINT=https://s3.us-west-004.backblazeb2.com
+S3_BUCKET=your-bucket-name
+S3_ACCESS_KEY_ID=your-key-id
+S3_SECRET_ACCESS_KEY=your-application-key
+```
+
+Optional:
+
+```text
+S3_PUBLIC_BASE_URL=https://f005.backblazeb2.com/file/your-bucket-name
+```
+
+`S3_PUBLIC_BASE_URL` is only used for metadata display. Downloads and previews still stream through the app.
