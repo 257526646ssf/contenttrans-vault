@@ -35,6 +35,10 @@ const storage = createStorage();
 const state = loadJson(STATE_FILE, {
   version: 1,
   files: [],
+  layout: {
+    updatedAt: null,
+    offsets: {},
+  },
 });
 
 const uploadSessions = loadJson(UPLOAD_FILE, {
@@ -299,6 +303,39 @@ function getStats() {
   };
 }
 
+function sanitizeLayoutOffsets(input) {
+  if (!input || typeof input !== "object" || Array.isArray(input)) return {};
+
+  const entries = Object.entries(input).slice(0, 64);
+  const offsets = {};
+
+  for (const [panelId, value] of entries) {
+    if (!/^[a-z0-9-]{1,64}$/i.test(panelId)) continue;
+    if (!value || typeof value !== "object" || Array.isArray(value)) continue;
+
+    const x = Number(value.x);
+    const y = Number(value.y);
+    if (!Number.isFinite(x) || !Number.isFinite(y)) continue;
+
+    offsets[panelId] = {
+      x: Math.round(x),
+      y: Math.round(y),
+    };
+  }
+
+  return offsets;
+}
+
+function getLayoutState() {
+  if (!state.layout || typeof state.layout !== "object") {
+    state.layout = { updatedAt: null, offsets: {} };
+  }
+  if (!state.layout.offsets || typeof state.layout.offsets !== "object") {
+    state.layout.offsets = {};
+  }
+  return state.layout;
+}
+
 function getVisibleFiles(query) {
   const q = String(query.q || "").trim().toLowerCase();
   const type = String(query.type || "all");
@@ -430,6 +467,33 @@ async function handleApi(req, res, url) {
 
   if (req.method === "GET" && pathname === "/api/health") {
     sendJson(res, 200, { ok: true, time: nowIso(), stats: getStats(), storage: storage.mode });
+    return true;
+  }
+
+  if (req.method === "GET" && pathname === "/api/layout") {
+    const layout = getLayoutState();
+    sendJson(res, 200, {
+      layout: {
+        updatedAt: layout.updatedAt || null,
+        offsets: layout.offsets || {},
+      },
+    });
+    return true;
+  }
+
+  if (req.method === "PUT" && pathname === "/api/layout") {
+    const body = await readJsonBody(req);
+    const layout = getLayoutState();
+    layout.offsets = sanitizeLayoutOffsets(body.offsets);
+    layout.updatedAt = nowIso();
+    persistState();
+    sendJson(res, 200, {
+      ok: true,
+      layout: {
+        updatedAt: layout.updatedAt,
+        offsets: layout.offsets,
+      },
+    });
     return true;
   }
 

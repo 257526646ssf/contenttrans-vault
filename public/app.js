@@ -22,6 +22,7 @@ const appState = {
   uploadQueue: [],
   uploading: false,
   layoutEditing: false,
+  layoutUpdatedAt: null,
 };
 
 const elements = {
@@ -104,8 +105,6 @@ const groupAccents = {
   other: "#9a82ff",
 };
 
-const panelOffsetStorageKey = "vaultPanelOffsets";
-
 boot();
 
 async function boot() {
@@ -116,6 +115,7 @@ async function boot() {
   startPointerEffects();
   startRevealObserver();
   setupLayoutEditing();
+  await loadLayout();
   renderTabs();
   renderQueue();
   await loadHealth();
@@ -163,7 +163,9 @@ function bindEvents() {
   elements.deleteBtn.addEventListener("click", deleteActiveFile);
   elements.restoreBtn.addEventListener("click", restoreActiveFile);
   elements.purgeBtn.addEventListener("click", purgeActiveFile);
-  elements.layoutModeBtn.addEventListener("click", toggleLayoutEditing);
+  elements.layoutModeBtn.addEventListener("click", () => {
+    void toggleLayoutEditing();
+  });
 
   for (const eventName of ["dragenter", "dragover"]) {
     elements.dropZone.addEventListener(eventName, (event) => {
@@ -188,6 +190,18 @@ function bindEvents() {
 
   document.addEventListener("keydown", (event) => {
     if (event.key === "Escape") closePreview();
+  });
+
+  document.addEventListener("visibilitychange", () => {
+    if (!document.hidden && !appState.layoutEditing) {
+      void loadLayout();
+    }
+  });
+
+  window.addEventListener("focus", () => {
+    if (!appState.layoutEditing) {
+      void loadLayout();
+    }
   });
 }
 
@@ -264,14 +278,9 @@ function startRevealObserver() {
 }
 
 function setupLayoutEditing() {
-  const savedOffsets = loadPanelOffsets();
   const panels = [...document.querySelectorAll(".panelDrift[data-panel-id]")];
 
   for (const panel of panels) {
-    const panelId = panel.dataset.panelId;
-    const saved = savedOffsets[panelId] || { x: 0, y: 0 };
-    applyPanelOffset(panel, saved.x, saved.y);
-
     const beginDrag = (startX, startY) => {
       if (!appState.layoutEditing) return;
 
@@ -333,6 +342,28 @@ function setupLayoutEditing() {
   syncLayoutModeButton();
 }
 
+async function loadLayout() {
+  try {
+    const payload = await apiJson("/api/layout");
+    const layout = payload.layout || {};
+    applyLayoutOffsets(layout.offsets || {});
+    appState.layoutUpdatedAt = layout.updatedAt || null;
+  } catch (error) {
+    if (!appState.layoutUpdatedAt) {
+      applyLayoutOffsets({});
+    }
+  }
+}
+
+function applyLayoutOffsets(offsets) {
+  const source = offsets && typeof offsets === "object" ? offsets : {};
+  for (const panel of document.querySelectorAll(".panelDrift[data-panel-id]")) {
+    const panelId = panel.dataset.panelId;
+    const next = source[panelId] || { x: 0, y: 0 };
+    applyPanelOffset(panel, Number(next.x) || 0, Number(next.y) || 0);
+  }
+}
+
 function applyPanelOffset(panel, x, y, syncDataset = true) {
   panel.style.setProperty("--drag-x", `${x}px`);
   panel.style.setProperty("--drag-y", `${y}px`);
@@ -341,21 +372,7 @@ function applyPanelOffset(panel, x, y, syncDataset = true) {
   panel.dataset.dragY = String(y);
 }
 
-function loadPanelOffsets() {
-  try {
-    return JSON.parse(localStorage.getItem(panelOffsetStorageKey) || "{}");
-  } catch (error) {
-    return {};
-  }
-}
-
-function persistPanelOffset(panelId, x, y) {
-  const offsets = loadPanelOffsets();
-  offsets[panelId] = { x, y };
-  localStorage.setItem(panelOffsetStorageKey, JSON.stringify(offsets));
-}
-
-function persistAllPanelOffsets() {
+function collectPanelOffsets() {
   const offsets = {};
   for (const panel of document.querySelectorAll(".panelDrift[data-panel-id]")) {
     offsets[panel.dataset.panelId] = {
@@ -363,16 +380,30 @@ function persistAllPanelOffsets() {
       y: Number(panel.dataset.dragY || 0),
     };
   }
-  localStorage.setItem(panelOffsetStorageKey, JSON.stringify(offsets));
+  return offsets;
 }
 
-function toggleLayoutEditing() {
+async function persistAllPanelOffsets() {
+  const offsets = collectPanelOffsets();
+  const payload = await apiJson("/api/layout", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ offsets }),
+  });
+  appState.layoutUpdatedAt = payload.layout?.updatedAt || nowIsoSafe();
+}
+
+async function toggleLayoutEditing() {
   appState.layoutEditing = !appState.layoutEditing;
   document.body.classList.toggle("is-layout-editing", appState.layoutEditing);
 
   if (!appState.layoutEditing) {
-    persistAllPanelOffsets();
-    toast("布局已保存");
+    try {
+      await persistAllPanelOffsets();
+      toast("布局已保存并同步到所有设备");
+    } catch (error) {
+      toast("布局保存失败，请重试");
+    }
   } else {
     toast("已进入布局模式，可拖动任意模块");
   }
@@ -1065,4 +1096,8 @@ function formatBytes(bytes) {
 
 function wait(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function nowIsoSafe() {
+  return new Date().toISOString();
 }
