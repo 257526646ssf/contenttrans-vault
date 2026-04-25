@@ -1,3 +1,5 @@
+const layoutSyncIntervalMs = 4000;
+
 const appState = {
   files: [],
   filteredFiles: [],
@@ -23,6 +25,7 @@ const appState = {
   uploading: false,
   layoutEditing: false,
   layoutUpdatedAt: null,
+  layoutSyncTimer: null,
 };
 
 const elements = {
@@ -115,7 +118,8 @@ async function boot() {
   startPointerEffects();
   startRevealObserver();
   setupLayoutEditing();
-  await loadLayout();
+  await syncLayoutFromServer(true);
+  startLayoutSync();
   renderTabs();
   renderQueue();
   await loadHealth();
@@ -194,13 +198,13 @@ function bindEvents() {
 
   document.addEventListener("visibilitychange", () => {
     if (!document.hidden && !appState.layoutEditing) {
-      void loadLayout();
+      void syncLayoutFromServer();
     }
   });
 
   window.addEventListener("focus", () => {
     if (!appState.layoutEditing) {
-      void loadLayout();
+      void syncLayoutFromServer();
     }
   });
 }
@@ -342,12 +346,25 @@ function setupLayoutEditing() {
   syncLayoutModeButton();
 }
 
-async function loadLayout() {
+function startLayoutSync() {
+  if (appState.layoutSyncTimer) return;
+
+  appState.layoutSyncTimer = window.setInterval(() => {
+    if (document.hidden || appState.layoutEditing) return;
+    void syncLayoutFromServer();
+  }, layoutSyncIntervalMs);
+}
+
+async function syncLayoutFromServer(force = false) {
   try {
     const payload = await apiJson("/api/layout");
     const layout = payload.layout || {};
-    applyLayoutOffsets(layout.offsets || {});
-    appState.layoutUpdatedAt = layout.updatedAt || null;
+    const updatedAt = layout.updatedAt || null;
+
+    if (force || updatedAt !== appState.layoutUpdatedAt) {
+      applyLayoutOffsets(layout.offsets || {});
+      appState.layoutUpdatedAt = updatedAt;
+    }
   } catch (error) {
     if (!appState.layoutUpdatedAt) {
       applyLayoutOffsets({});
