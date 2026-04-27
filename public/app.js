@@ -21,6 +21,7 @@ const appState = {
   selectedIds: new Set(),
   activeFileId: null,
   activeTextContent: null,
+  textMessages: [],
   deviceName: localStorage.getItem("vaultDeviceName") || "",
   uploadQueue: [],
   uploading: false,
@@ -56,10 +57,14 @@ const elements = {
   batchDeleteBtnMirror: document.getElementById("batchDeleteBtnMirror"),
   dropZone: document.getElementById("dropZone"),
   textComposer: document.getElementById("textComposer"),
+  messageForm: document.getElementById("messageForm"),
+  messageList: document.getElementById("messageList"),
+  messageEmpty: document.getElementById("messageEmpty"),
   textNoteInput: document.getElementById("textNoteInput"),
   textNoteCount: document.getElementById("textNoteCount"),
   saveTextNoteBtn: document.getElementById("saveTextNoteBtn"),
   clearTextNoteBtn: document.getElementById("clearTextNoteBtn"),
+  refreshMessagesBtn: document.getElementById("refreshMessagesBtn"),
   deviceName: document.getElementById("deviceName"),
   previewPanel: document.getElementById("previewPanel"),
   closePreviewBtn: document.getElementById("closePreviewBtn"),
@@ -133,6 +138,7 @@ async function boot() {
   updateTextNoteCount();
   await loadHealth();
   await refreshFiles();
+  await loadTextMessages();
 }
 
 function bindEvents() {
@@ -180,15 +186,38 @@ function bindEvents() {
   elements.restoreBtn.addEventListener("click", restoreActiveFile);
   elements.purgeBtn.addEventListener("click", purgeActiveFile);
   elements.copyTextBtn.addEventListener("click", copyActiveTextFile);
-  elements.textComposer.addEventListener("submit", (event) => {
+  elements.messageForm.addEventListener("submit", (event) => {
     event.preventDefault();
     void saveTextNote();
   });
   elements.textNoteInput.addEventListener("input", updateTextNoteCount);
+  elements.textNoteInput.addEventListener("keydown", (event) => {
+    if (event.key !== "Enter" || event.shiftKey || event.isComposing) return;
+    event.preventDefault();
+    void saveTextNote();
+  });
   elements.clearTextNoteBtn.addEventListener("click", () => {
     elements.textNoteInput.value = "";
     updateTextNoteCount();
     elements.textNoteInput.focus();
+  });
+  elements.refreshMessagesBtn.addEventListener("click", () => {
+    void loadTextMessages();
+  });
+  elements.messageList.addEventListener("click", (event) => {
+    const copyButton = event.target.closest("[data-message-copy]");
+    if (copyButton) {
+      const message = appState.textMessages.find((item) => item.id === copyButton.dataset.messageCopy);
+      if (message) {
+        void copyText(message.text)
+          .then(() => toast("消息已复制"))
+          .catch(() => toast("复制失败，请重试"));
+      }
+      return;
+    }
+
+    const bubble = event.target.closest("[data-message-open]");
+    if (bubble) openPreview(bubble.dataset.messageOpen);
   });
   elements.layoutModeBtn.addEventListener("click", () => {
     void toggleLayoutEditing();
@@ -569,6 +598,70 @@ async function refreshFiles() {
   updatePreview();
 }
 
+async function loadTextMessages() {
+  try {
+    const payload = await apiJson("/api/text-notes?limit=200");
+    appState.textMessages = Array.isArray(payload.messages) ? payload.messages : [];
+  } catch (error) {
+    appState.textMessages = [];
+  }
+  renderTextMessages();
+}
+
+function renderTextMessages() {
+  elements.messageList.innerHTML = "";
+  elements.messageEmpty.classList.toggle("hidden", appState.textMessages.length > 0);
+
+  if (!appState.textMessages.length) {
+    elements.messageList.appendChild(elements.messageEmpty);
+    return;
+  }
+
+  let lastDateKey = "";
+  for (const message of appState.textMessages) {
+    const dateKey = formatMessageDate(message.createdAt);
+    if (dateKey !== lastDateKey) {
+      const divider = document.createElement("div");
+      divider.className = "messageDivider";
+      divider.textContent = dateKey;
+      elements.messageList.appendChild(divider);
+      lastDateKey = dateKey;
+    }
+
+    const row = document.createElement("article");
+    row.className = "messageRow messageRow--self";
+
+    const bubble = document.createElement("button");
+    bubble.type = "button";
+    bubble.className = "messageBubble";
+    bubble.dataset.messageOpen = message.id;
+
+    const text = document.createElement("span");
+    text.className = "messageBubble__text";
+    text.textContent = message.text || "(空消息)";
+    bubble.appendChild(text);
+
+    const meta = document.createElement("span");
+    meta.className = "messageBubble__meta";
+    meta.textContent = `${formatMessageTime(message.createdAt)} · ${message.deviceName || "当前设备"}`;
+    bubble.appendChild(meta);
+
+    const copy = document.createElement("button");
+    copy.type = "button";
+    copy.className = "messageCopy";
+    copy.dataset.messageCopy = message.id;
+    copy.textContent = "复制";
+
+    row.appendChild(bubble);
+    row.appendChild(copy);
+    elements.messageList.appendChild(row);
+  }
+
+  requestAnimationFrame(() => {
+    elements.messageList.scrollTop = elements.messageList.scrollHeight;
+  });
+}
+
 function filterFilesForView() {
   return appState.files.filter((file) => {
     if (appState.activeType === "favorite") return file.favorite && !file.deletedAt;
@@ -813,11 +906,11 @@ async function saveTextNote() {
 
     elements.textNoteInput.value = "";
     updateTextNoteCount();
-    toast("文本已保存到仓库");
+    toast("消息已保存");
     await refreshFiles();
-    if (payload.file?.id) openPreview(payload.file.id);
+    await loadTextMessages();
   } catch (error) {
-    toast("文本保存失败，请重试");
+    toast("消息保存失败，请重试");
   } finally {
     elements.saveTextNoteBtn.disabled = false;
   }
@@ -899,6 +992,7 @@ async function deleteActiveFile() {
   await apiJson(`/api/files/${file.id}`, { method: "DELETE" });
   toast("文件已移入回收站");
   await refreshFiles();
+  if (file.source === "text-note") await loadTextMessages();
 }
 
 async function restoreActiveFile() {
@@ -908,6 +1002,7 @@ async function restoreActiveFile() {
   await apiJson(`/api/files/${file.id}/restore`, { method: "POST" });
   toast("文件已恢复");
   await refreshFiles();
+  if (file.source === "text-note") await loadTextMessages();
 }
 
 async function purgeActiveFile() {
@@ -918,6 +1013,7 @@ async function purgeActiveFile() {
   await apiJson(`/api/files/${file.id}/permanent`, { method: "DELETE" });
   toast("文件已永久删除");
   await refreshFiles();
+  if (file.source === "text-note") await loadTextMessages();
 }
 
 async function queueFiles(files) {
@@ -1217,6 +1313,29 @@ function formatDate(value) {
     dateStyle: "medium",
     timeStyle: "short",
   }).format(new Date(value));
+}
+
+function formatMessageDate(value) {
+  const date = value ? new Date(value) : new Date();
+  const today = new Date();
+  const yesterday = new Date();
+  yesterday.setDate(today.getDate() - 1);
+
+  if (date.toDateString() === today.toDateString()) return "今天";
+  if (date.toDateString() === yesterday.toDateString()) return "昨天";
+
+  return new Intl.DateTimeFormat("zh-CN", {
+    month: "2-digit",
+    day: "2-digit",
+    weekday: "short",
+  }).format(date);
+}
+
+function formatMessageTime(value) {
+  return new Intl.DateTimeFormat("zh-CN", {
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(value ? new Date(value) : new Date());
 }
 
 function formatBytes(bytes) {

@@ -441,6 +441,26 @@ function writeFileBuffer(filePath, buffer) {
   fs.writeFileSync(filePath, buffer);
 }
 
+function streamToBuffer(stream) {
+  return new Promise((resolve, reject) => {
+    const chunks = [];
+    stream.on("data", (chunk) => chunks.push(Buffer.from(chunk)));
+    stream.on("end", () => resolve(Buffer.concat(chunks)));
+    stream.on("error", reject);
+  });
+}
+
+async function getTextNoteContent(file) {
+  if (typeof file.textContent === "string") return file.textContent;
+
+  try {
+    const stream = await storage.createReadStream(file);
+    return (await streamToBuffer(stream)).toString("utf8");
+  } catch (error) {
+    return "";
+  }
+}
+
 function textNoteName(text, name) {
   const firstLine = String(text || "")
     .split(/\r?\n/)
@@ -651,6 +671,30 @@ async function handleApi(req, res, url) {
     return true;
   }
 
+  if (req.method === "GET" && pathname === "/api/text-notes") {
+    const limit = Math.min(500, Math.max(1, Number(url.searchParams.get("limit")) || 200));
+    const records = state.files
+      .filter((file) => file.source === "text-note" && !file.deletedAt)
+      .sort((a, b) => new Date(a.uploadedAt).getTime() - new Date(b.uploadedAt).getTime())
+      .slice(-limit);
+
+    const messages = [];
+    for (const file of records) {
+      messages.push({
+        id: file.id,
+        text: await getTextNoteContent(file),
+        createdAt: file.uploadedAt,
+        updatedAt: file.updatedAt,
+        deviceName: file.deviceName || "未命名设备",
+        size: file.size || 0,
+        originalName: file.originalName,
+      });
+    }
+
+    sendJson(res, 200, { messages });
+    return true;
+  }
+
   if (req.method === "POST" && pathname === "/api/text-notes") {
     const body = await readJsonBody(req);
     const text = typeof body.text === "string" ? body.text.replace(/\r\n/g, "\n").trimEnd() : "";
@@ -692,6 +736,7 @@ async function handleApi(req, res, url) {
         source: "text-note",
         note: typeof body.note === "string" ? body.note.slice(0, 5000) : "文本快存",
         tags: parseTags(body.tags).slice(0, 30),
+        textContent: text,
         favorite: false,
         deletedAt: null,
         previewable: true,

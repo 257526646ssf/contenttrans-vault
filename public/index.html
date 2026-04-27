@@ -241,23 +241,40 @@
               </div>
             </div>
 
-            <form id="textComposer" class="textComposer">
-              <div class="panelKicker">Text Relay</div>
-              <h3>文本快存</h3>
-              <textarea
-                id="textNoteInput"
-                rows="7"
-                maxlength="200000"
-                placeholder="像聊天一样输入文字，保存后会进入仓库；手机和电脑都能打开并一键复制。"
-              ></textarea>
-              <div class="textComposer__bar">
-                <span id="textNoteCount">0 字</span>
-                <div class="textComposer__actions">
-                  <button id="clearTextNoteBtn" class="btn btn--ghost" type="button">清空</button>
-                  <button id="saveTextNoteBtn" class="btn btn--secondary" type="submit">保存文本</button>
+            <section id="textComposer" class="chatDock">
+              <div class="chatDock__head">
+                <div>
+                  <div class="panelKicker">Conversation Vault</div>
+                  <h3>对话记录</h3>
                 </div>
+                <button id="refreshMessagesBtn" class="chatDock__iconBtn" type="button" title="刷新消息">↻</button>
               </div>
-            </form>
+
+              <div id="messageList" class="messageList" aria-live="polite">
+                <div id="messageEmpty" class="messageEmpty">暂无对话记录</div>
+              </div>
+
+              <form id="messageForm" class="messageComposer">
+                <div class="messageComposer__tools" aria-hidden="true">
+                  <span></span>
+                  <span></span>
+                  <span></span>
+                </div>
+                <textarea
+                  id="textNoteInput"
+                  rows="3"
+                  maxlength="200000"
+                  placeholder="输入一条对话记录"
+                ></textarea>
+                <div class="messageComposer__bar">
+                  <span id="textNoteCount">0 字</span>
+                  <div class="messageComposer__actions">
+                    <button id="clearTextNoteBtn" class="btn btn--ghost" type="button">清空</button>
+                    <button id="saveTextNoteBtn" class="btn btn--secondary" type="submit">发送</button>
+                  </div>
+                </div>
+              </form>
+            </section>
           </div>
 
           <div id="queueList" class="queue"></div>
