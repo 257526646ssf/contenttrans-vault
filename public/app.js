@@ -20,6 +20,7 @@ const appState = {
   order: "desc",
   selectedIds: new Set(),
   activeFileId: null,
+  activeTextContent: null,
   deviceName: localStorage.getItem("vaultDeviceName") || "",
   uploadQueue: [],
   uploading: false,
@@ -684,6 +685,7 @@ function openPreview(fileId) {
   if (!file) return;
 
   appState.activeFileId = file.id;
+  appState.activeTextContent = null;
   elements.previewPanel.classList.add("is-open");
   elements.previewEmpty.classList.add("hidden");
   elements.previewContent.classList.remove("hidden");
@@ -697,6 +699,7 @@ function openPreview(fileId) {
   elements.tagsInput.value = (file.tags || []).join(", ");
   elements.favoriteBtn.textContent = file.favorite ? "取消收藏" : "加入收藏";
   elements.copyTextBtn.classList.toggle("hidden", file.group !== "text");
+  elements.copyTextBtn.disabled = file.group === "text";
   elements.deleteBtn.classList.toggle("hidden", Boolean(file.deletedAt));
   elements.restoreBtn.classList.toggle("hidden", !file.deletedAt);
   elements.purgeBtn.classList.toggle("hidden", !file.deletedAt);
@@ -710,6 +713,7 @@ function openPreview(fileId) {
 
 function closePreview() {
   appState.activeFileId = null;
+  appState.activeTextContent = null;
   elements.previewPanel.classList.remove("is-open");
   elements.previewContent.classList.add("hidden");
   elements.previewEmpty.classList.remove("hidden");
@@ -754,7 +758,12 @@ async function renderPreviewMedia(file) {
     const pre = document.createElement("pre");
     try {
       const response = await fetch(`/api/files/${file.id}/preview`);
-      pre.textContent = (await response.text()).slice(0, 20000) || "(空文件)";
+      const text = await response.text();
+      pre.textContent = text.slice(0, 20000) || "(空文件)";
+      if (appState.activeFileId === file.id) {
+        appState.activeTextContent = text;
+        elements.copyTextBtn.disabled = false;
+      }
     } catch (error) {
       pre.textContent = "文本预览暂时不可用，请直接下载原文件。";
     }
@@ -819,9 +828,9 @@ async function copyActiveTextFile() {
   if (!file || file.group !== "text") return;
 
   try {
-    const response = await fetch(`/api/files/${file.id}/preview`);
-    if (!response.ok) throw new Error("Preview unavailable");
-    await copyText(await response.text());
+    const text = typeof appState.activeTextContent === "string" ? appState.activeTextContent : "";
+    if (!text) throw new Error("Text preview unavailable");
+    await copyText(text);
     toast("文本已复制");
   } catch (error) {
     toast("复制失败，请直接下载原文件");
