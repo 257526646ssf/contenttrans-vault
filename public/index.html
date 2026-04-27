@@ -240,6 +240,24 @@
                 <p>图片、视频、PPT、压缩包、PDF、文本或任意文件都可以进入上传队列。</p>
               </div>
             </div>
+
+            <form id="textComposer" class="textComposer">
+              <div class="panelKicker">Text Relay</div>
+              <h3>文本快存</h3>
+              <textarea
+                id="textNoteInput"
+                rows="7"
+                maxlength="200000"
+                placeholder="像聊天一样输入文字，保存后会进入仓库；手机和电脑都能打开并一键复制。"
+              ></textarea>
+              <div class="textComposer__bar">
+                <span id="textNoteCount">0 字</span>
+                <div class="textComposer__actions">
+                  <button id="clearTextNoteBtn" class="btn btn--ghost" type="button">清空</button>
+                  <button id="saveTextNoteBtn" class="btn btn--secondary" type="submit">保存文本</button>
+                </div>
+              </div>
+            </form>
           </div>
 
           <div id="queueList" class="queue"></div>
@@ -310,6 +328,7 @@
               <div class="editor__actions">
                 <button id="saveMetaBtn" class="btn btn--primary">保存修改</button>
                 <button id="favoriteBtn" class="btn btn--secondary">加入收藏</button>
+                <button id="copyTextBtn" class="btn btn--secondary hidden">复制文本</button>
                 <button id="downloadBtn" class="btn btn--ghost">下载文件</button>
                 <button id="deleteBtn" class="btn btn--danger">移入回收站</button>
                 <button id="restoreBtn" class="btn btn--secondary hidden">恢复文件</button>

@@ -16,6 +16,7 @@ const TEMP_DIR = path.join(STORAGE_DIR, "tmp");
 const STATE_FILE = path.join(DATA_DIR, "vault.json");
 const UPLOAD_FILE = path.join(DATA_DIR, "uploads.json");
 const DEFAULT_CHUNK_SIZE = 5 * 1024 * 1024;
+const MAX_TEXT_NOTE_CHARS = 200000;
 const STORAGE_DRIVER = String(process.env.STORAGE_DRIVER || "local").trim().toLowerCase();
 const S3_REGION = String(process.env.S3_REGION || "").trim();
 const S3_ENDPOINT = String(process.env.S3_ENDPOINT || "").trim();
@@ -440,6 +441,15 @@ function writeFileBuffer(filePath, buffer) {
   fs.writeFileSync(filePath, buffer);
 }
 
+function textNoteName(text, name) {
+  const firstLine = String(text || "")
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .find(Boolean);
+  const base = normalizeName(String(name || firstLine || "文本记录").slice(0, 80));
+  return base.toLowerCase().endsWith(".txt") ? base : `${base}.txt`;
+}
+
 function toNodeReadable(body) {
   if (!body) throw new Error("Empty object body");
   if (typeof body.pipe === "function") return body;
@@ -639,6 +649,61 @@ async function handleApi(req, res, url) {
     persistState();
     sendJson(res, 200, { ok: true, affected });
     return true;
+  }
+
+  if (req.method === "POST" && pathname === "/api/text-notes") {
+    const body = await readJsonBody(req);
+    const text = typeof body.text === "string" ? body.text.replace(/\r\n/g, "\n").trimEnd() : "";
+
+    if (!text.trim()) {
+      sendJson(res, 400, { error: "Text is required" });
+      return true;
+    }
+
+    if (text.length > MAX_TEXT_NOTE_CHARS) {
+      sendJson(res, 413, { error: `Text exceeds ${MAX_TEXT_NOTE_CHARS} characters` });
+      return true;
+    }
+
+    const fileId = safeId();
+    const originalName = textNoteName(text, body.name);
+    const storedName = `${fileId}.txt`;
+    const tempPath = path.join(TEMP_DIR, storedName);
+
+    try {
+      fs.writeFileSync(tempPath, text, "utf8");
+      const stored = await storage.putObject(storedName, tempPath, "text/plain; charset=utf-8");
+      const fileRecord = {
+        id: fileId,
+        originalName,
+        storedName: stored.storedName,
+        objectKey: stored.objectKey,
+        storageDriver: stored.storageDriver,
+        storagePath: stored.storagePath,
+        publicUrl: stored.publicUrl,
+        mimeType: "text/plain; charset=utf-8",
+        ext: ".txt",
+        group: "text",
+        groupLabel: fileCategoryLabel("text"),
+        size: Buffer.byteLength(text, "utf8"),
+        uploadedAt: nowIso(),
+        updatedAt: nowIso(),
+        deviceName: String(body.deviceName || "未命名设备").slice(0, 120),
+        source: "text-note",
+        note: typeof body.note === "string" ? body.note.slice(0, 5000) : "文本快存",
+        tags: parseTags(body.tags).slice(0, 30),
+        favorite: false,
+        deletedAt: null,
+        previewable: true,
+      };
+
+      state.files.unshift(fileRecord);
+      persistState();
+      sendJson(res, 200, { ok: true, file: serializeFile(fileRecord) });
+      return true;
+    } finally {
+      fs.rmSync(tempPath, { force: true });
+    }
   }
 
   if (req.method === "POST" && pathname === "/api/uploads/init") {

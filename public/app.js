@@ -26,6 +26,7 @@ const appState = {
   layoutEditing: false,
   layoutUpdatedAt: null,
   layoutSyncTimer: null,
+  searchTimer: null,
 };
 
 const elements = {
@@ -53,6 +54,11 @@ const elements = {
   batchDeleteBtn: document.getElementById("batchDeleteBtn"),
   batchDeleteBtnMirror: document.getElementById("batchDeleteBtnMirror"),
   dropZone: document.getElementById("dropZone"),
+  textComposer: document.getElementById("textComposer"),
+  textNoteInput: document.getElementById("textNoteInput"),
+  textNoteCount: document.getElementById("textNoteCount"),
+  saveTextNoteBtn: document.getElementById("saveTextNoteBtn"),
+  clearTextNoteBtn: document.getElementById("clearTextNoteBtn"),
   deviceName: document.getElementById("deviceName"),
   previewPanel: document.getElementById("previewPanel"),
   closePreviewBtn: document.getElementById("closePreviewBtn"),
@@ -68,6 +74,7 @@ const elements = {
   tagsInput: document.getElementById("tagsInput"),
   saveMetaBtn: document.getElementById("saveMetaBtn"),
   favoriteBtn: document.getElementById("favoriteBtn"),
+  copyTextBtn: document.getElementById("copyTextBtn"),
   downloadBtn: document.getElementById("downloadBtn"),
   deleteBtn: document.getElementById("deleteBtn"),
   restoreBtn: document.getElementById("restoreBtn"),
@@ -122,6 +129,7 @@ async function boot() {
   startLayoutSync();
   renderTabs();
   renderQueue();
+  updateTextNoteCount();
   await loadHealth();
   await refreshFiles();
 }
@@ -129,7 +137,10 @@ async function boot() {
 function bindEvents() {
   elements.searchInput.addEventListener("input", async (event) => {
     appState.query = event.target.value.trim();
-    await refreshFiles();
+    window.clearTimeout(appState.searchTimer);
+    appState.searchTimer = window.setTimeout(() => {
+      void refreshFiles();
+    }, 180);
   });
 
   elements.sortSelect.addEventListener("change", async (event) => {
@@ -167,6 +178,17 @@ function bindEvents() {
   elements.deleteBtn.addEventListener("click", deleteActiveFile);
   elements.restoreBtn.addEventListener("click", restoreActiveFile);
   elements.purgeBtn.addEventListener("click", purgeActiveFile);
+  elements.copyTextBtn.addEventListener("click", copyActiveTextFile);
+  elements.textComposer.addEventListener("submit", (event) => {
+    event.preventDefault();
+    void saveTextNote();
+  });
+  elements.textNoteInput.addEventListener("input", updateTextNoteCount);
+  elements.clearTextNoteBtn.addEventListener("click", () => {
+    elements.textNoteInput.value = "";
+    updateTextNoteCount();
+    elements.textNoteInput.focus();
+  });
   elements.layoutModeBtn.addEventListener("click", () => {
     void toggleLayoutEditing();
   });
@@ -211,6 +233,10 @@ function bindEvents() {
 
 function startPointerEffects() {
   const root = document.documentElement;
+  const canTilt = window.matchMedia("(hover: hover) and (pointer: fine)").matches;
+  let activeTiltCard = null;
+  let frame = 0;
+  let pending = null;
 
   const updatePointer = (clientX, clientY) => {
     const xPercent = (clientX / window.innerWidth) * 100;
@@ -221,9 +247,22 @@ function startPointerEffects() {
     root.style.setProperty("--motion-y", `${(yPercent - 50) * 0.12}px`);
   };
 
+  const schedulePointer = (clientX, clientY, tilt = false) => {
+    pending = { clientX, clientY, tilt };
+    if (frame) return;
+    frame = window.requestAnimationFrame(() => {
+      frame = 0;
+      if (!pending) return;
+      updatePointer(pending.clientX, pending.clientY);
+      if (pending.tilt && canTilt) {
+        activeTiltCard = applyTilt(pending.clientX, pending.clientY, activeTiltCard);
+      }
+      pending = null;
+    });
+  };
+
   window.addEventListener("mousemove", (event) => {
-    updatePointer(event.clientX, event.clientY);
-    applyTilt(event);
+    schedulePointer(event.clientX, event.clientY, true);
   });
 
   window.addEventListener(
@@ -231,36 +270,31 @@ function startPointerEffects() {
     (event) => {
       const touch = event.touches[0];
       if (!touch) return;
-      updatePointer(touch.clientX, touch.clientY);
+      schedulePointer(touch.clientX, touch.clientY, false);
     },
     { passive: true }
   );
 
-  document.addEventListener("mouseleave", resetTilt);
-}
-
-function applyTilt(event) {
-  document.querySelectorAll(".motionCard").forEach((card) => {
-    const rect = card.getBoundingClientRect();
-    if (
-      event.clientX < rect.left ||
-      event.clientX > rect.right ||
-      event.clientY < rect.top ||
-      event.clientY > rect.bottom
-    ) {
-      return;
-    }
-
-    const rotateY = ((event.clientX - rect.left) / rect.width - 0.5) * 6;
-    const rotateX = ((event.clientY - rect.top) / rect.height - 0.5) * -6;
-    card.style.transform = `translateY(-2px) rotateX(${rotateX.toFixed(2)}deg) rotateY(${rotateY.toFixed(2)}deg)`;
+  document.addEventListener("mouseleave", () => {
+    resetTilt(activeTiltCard);
+    activeTiltCard = null;
   });
 }
 
-function resetTilt() {
-  document.querySelectorAll(".motionCard").forEach((card) => {
-    card.style.transform = "";
-  });
+function applyTilt(clientX, clientY, previousCard) {
+  const card = document.elementFromPoint(clientX, clientY)?.closest(".motionCard");
+  if (previousCard && previousCard !== card) resetTilt(previousCard);
+  if (!card) return null;
+
+  const rect = card.getBoundingClientRect();
+  const rotateY = ((clientX - rect.left) / rect.width - 0.5) * 6;
+  const rotateX = ((clientY - rect.top) / rect.height - 0.5) * -6;
+  card.style.transform = `translateY(-2px) rotateX(${rotateX.toFixed(2)}deg) rotateY(${rotateY.toFixed(2)}deg)`;
+  return card;
+}
+
+function resetTilt(card) {
+  if (card) card.style.transform = "";
 }
 
 function startRevealObserver() {
@@ -662,6 +696,7 @@ function openPreview(fileId) {
   elements.noteInput.value = file.note || "";
   elements.tagsInput.value = (file.tags || []).join(", ");
   elements.favoriteBtn.textContent = file.favorite ? "取消收藏" : "加入收藏";
+  elements.copyTextBtn.classList.toggle("hidden", file.group !== "text");
   elements.deleteBtn.classList.toggle("hidden", Boolean(file.deletedAt));
   elements.restoreBtn.classList.toggle("hidden", !file.deletedAt);
   elements.purgeBtn.classList.toggle("hidden", !file.deletedAt);
@@ -713,6 +748,9 @@ async function renderPreviewMedia(file) {
   }
 
   if (file.group === "text") {
+    const shell = document.createElement("div");
+    shell.className = "textBubble";
+
     const pre = document.createElement("pre");
     try {
       const response = await fetch(`/api/files/${file.id}/preview`);
@@ -720,7 +758,8 @@ async function renderPreviewMedia(file) {
     } catch (error) {
       pre.textContent = "文本预览暂时不可用，请直接下载原文件。";
     }
-    elements.previewMedia.appendChild(pre);
+    shell.appendChild(pre);
+    elements.previewMedia.appendChild(shell);
     return;
   }
 
@@ -736,6 +775,74 @@ async function renderPreviewMedia(file) {
   fallback.className = "preview__empty";
   fallback.textContent = "这个文件类型暂不支持内嵌预览，但仍然可以直接下载原文件。";
   elements.previewMedia.appendChild(fallback);
+}
+
+function updateTextNoteCount() {
+  const count = elements.textNoteInput.value.length;
+  elements.textNoteCount.textContent = `${count.toLocaleString("zh-CN")} 字`;
+}
+
+async function saveTextNote() {
+  const text = elements.textNoteInput.value.trimEnd();
+  if (!text.trim()) {
+    toast("先输入要保存的文本");
+    elements.textNoteInput.focus();
+    return;
+  }
+
+  elements.saveTextNoteBtn.disabled = true;
+  try {
+    const payload = await apiJson("/api/text-notes", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        text,
+        deviceName: appState.deviceName || "浏览器文本框",
+        tags: ["文本快存"],
+      }),
+    });
+
+    elements.textNoteInput.value = "";
+    updateTextNoteCount();
+    toast("文本已保存到仓库");
+    await refreshFiles();
+    if (payload.file?.id) openPreview(payload.file.id);
+  } catch (error) {
+    toast("文本保存失败，请重试");
+  } finally {
+    elements.saveTextNoteBtn.disabled = false;
+  }
+}
+
+async function copyActiveTextFile() {
+  const file = getActiveFile();
+  if (!file || file.group !== "text") return;
+
+  try {
+    const response = await fetch(`/api/files/${file.id}/preview`);
+    if (!response.ok) throw new Error("Preview unavailable");
+    await copyText(await response.text());
+    toast("文本已复制");
+  } catch (error) {
+    toast("复制失败，请直接下载原文件");
+  }
+}
+
+async function copyText(text) {
+  if (navigator.clipboard?.writeText) {
+    await navigator.clipboard.writeText(text);
+    return;
+  }
+
+  const textarea = document.createElement("textarea");
+  textarea.value = text;
+  textarea.setAttribute("readonly", "");
+  textarea.style.position = "fixed";
+  textarea.style.left = "-9999px";
+  document.body.appendChild(textarea);
+  textarea.select();
+  document.execCommand("copy");
+  textarea.remove();
 }
 
 async function saveActiveMetadata() {
