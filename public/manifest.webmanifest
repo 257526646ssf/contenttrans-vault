@@ -1,0 +1,18 @@
+{
+  "name": "Vault One",
+  "short_name": "Vault One",
+  "description": "单人私有云仓库，用于跨设备存取文件和对话记录。",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#06070c",
+  "theme_color": "#06070c",
+  "icons": [
+    {
+      "src": "/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

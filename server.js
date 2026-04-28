@@ -17,6 +17,9 @@ const STATE_FILE = path.join(DATA_DIR, "vault.json");
 const UPLOAD_FILE = path.join(DATA_DIR, "uploads.json");
 const DEFAULT_CHUNK_SIZE = 5 * 1024 * 1024;
 const MAX_TEXT_NOTE_CHARS = 200000;
+const ACCESS_CODE = String(process.env.VAULT_ACCESS_CODE || "2575266469").trim();
+const ACCESS_COOKIE = "vault_access";
+const ACCESS_TOKEN = crypto.createHash("sha256").update(`vault-one:${ACCESS_CODE}`).digest("hex");
 const STORAGE_DRIVER = String(process.env.STORAGE_DRIVER || "local").trim().toLowerCase();
 const S3_REGION = String(process.env.S3_REGION || "").trim();
 const S3_ENDPOINT = String(process.env.S3_ENDPOINT || "").trim();
@@ -52,6 +55,7 @@ const mimeTypes = {
   ".css": "text/css; charset=utf-8",
   ".js": "application/javascript; charset=utf-8",
   ".json": "application/json; charset=utf-8",
+  ".webmanifest": "application/manifest+json; charset=utf-8",
   ".png": "image/png",
   ".jpg": "image/jpeg",
   ".jpeg": "image/jpeg",
@@ -265,6 +269,43 @@ function getFileById(id) {
   return state.files.find((file) => file.id === id) || null;
 }
 
+function parseCookies(req) {
+  const header = String(req.headers.cookie || "");
+  const cookies = {};
+  for (const part of header.split(";")) {
+    const index = part.indexOf("=");
+    if (index === -1) continue;
+    const key = part.slice(0, index).trim();
+    const value = part.slice(index + 1).trim();
+    if (!key) continue;
+    cookies[key] = decodeURIComponent(value);
+  }
+  return cookies;
+}
+
+function getAccessToken(req) {
+  const headerToken = String(req.headers["x-vault-token"] || "").trim();
+  if (headerToken) return headerToken;
+  return parseCookies(req)[ACCESS_COOKIE] || "";
+}
+
+function isAuthorized(req) {
+  if (!ACCESS_CODE) return true;
+  return getAccessToken(req) === ACCESS_TOKEN;
+}
+
+function authPayload(req) {
+  return {
+    locked: Boolean(ACCESS_CODE),
+    authorized: isAuthorized(req),
+  };
+}
+
+function authCookie(value, maxAge = 60 * 60 * 24 * 365) {
+  const encoded = encodeURIComponent(value);
+  return `${ACCESS_COOKIE}=${encoded}; Path=/; Max-Age=${maxAge}; SameSite=Lax; HttpOnly`;
+}
+
 function serializeFile(file) {
   return {
     id: file.id,
@@ -282,6 +323,8 @@ function serializeFile(file) {
     tags: file.tags || [],
     favorite: Boolean(file.favorite),
     deletedAt: file.deletedAt || null,
+    lastAccessedAt: file.lastAccessedAt || null,
+    accessCount: Number(file.accessCount || 0),
     previewable: Boolean(file.previewable),
     storageDriver: file.storageDriver || storage.mode,
     publicUrl: file.publicUrl || "",
@@ -299,6 +342,8 @@ function getStats() {
     total: visible.length,
     trash: trash.length,
     favorites: visible.filter((file) => file.favorite).length,
+    messages: visible.filter((file) => file.source === "text-note").length,
+    recent: visible.filter((file) => file.lastAccessedAt).length,
     size: bytes,
     counts,
   };
@@ -350,6 +395,7 @@ function getVisibleFiles(query) {
     files = files.filter((file) => {
       if (type === "favorite") return file.favorite && !file.deletedAt;
       if (type === "trash") return Boolean(file.deletedAt);
+      if (type === "recent") return Boolean(file.lastAccessedAt) && !file.deletedAt;
       return file.group === type;
     });
   }
@@ -362,6 +408,7 @@ function getVisibleFiles(query) {
         ...(file.tags || []),
         file.deviceName,
         file.groupLabel,
+        file.source === "text-note" ? file.textContent : "",
       ]
         .join(" ")
         .toLowerCase();
@@ -381,11 +428,12 @@ function getVisibleFiles(query) {
   return files;
 }
 
-function sendJson(res, statusCode, payload) {
+function sendJson(res, statusCode, payload, headers = {}) {
   const body = JSON.stringify(payload);
   res.writeHead(statusCode, {
     "Content-Type": "application/json; charset=utf-8",
     "Content-Length": Buffer.byteLength(body),
+    ...headers,
   });
   res.end(body);
 }
@@ -492,11 +540,187 @@ async function sendStoredFile(res, file, disposition) {
   stream.pipe(res);
 }
 
+async function readStoredFileBuffer(file) {
+  const stream = await storage.createReadStream(file);
+  return streamToBuffer(stream);
+}
+
+function markFileAccess(file) {
+  file.lastAccessedAt = nowIso();
+  file.accessCount = Number(file.accessCount || 0) + 1;
+  file.updatedAt = file.updatedAt || file.lastAccessedAt;
+  persistState();
+}
+
+const crcTable = (() => {
+  const table = new Uint32Array(256);
+  for (let n = 0; n < 256; n += 1) {
+    let c = n;
+    for (let k = 0; k < 8; k += 1) {
+      c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+    }
+    table[n] = c >>> 0;
+  }
+  return table;
+})();
+
+function crc32(buffer) {
+  let crc = 0xffffffff;
+  for (const byte of buffer) {
+    crc = crcTable[(crc ^ byte) & 0xff] ^ (crc >>> 8);
+  }
+  return (crc ^ 0xffffffff) >>> 0;
+}
+
+function dosDateTime(value) {
+  const date = value ? new Date(value) : new Date();
+  const year = Math.max(1980, date.getFullYear());
+  return {
+    time: (date.getHours() << 11) | (date.getMinutes() << 5) | Math.floor(date.getSeconds() / 2),
+    date: ((year - 1980) << 9) | ((date.getMonth() + 1) << 5) | date.getDate(),
+  };
+}
+
+function uniqueArchiveName(file, used) {
+  const safeName = normalizeName(file.originalName || `${file.id}.bin`).replace(/[\\/:*?"<>|]/g, "_");
+  const ext = path.extname(safeName);
+  const base = ext ? safeName.slice(0, -ext.length) : safeName;
+  let candidate = safeName;
+  let index = 2;
+  while (used.has(candidate.toLowerCase())) {
+    candidate = `${base} (${index})${ext}`;
+    index += 1;
+  }
+  used.add(candidate.toLowerCase());
+  return candidate;
+}
+
+function buildZip(entries) {
+  const parts = [];
+  const central = [];
+  let offset = 0;
+
+  for (const entry of entries) {
+    const name = Buffer.from(entry.name, "utf8");
+    const data = entry.data;
+    const { time, date } = dosDateTime(entry.date);
+    const crc = crc32(data);
+
+    const local = Buffer.alloc(30 + name.length);
+    local.writeUInt32LE(0x04034b50, 0);
+    local.writeUInt16LE(20, 4);
+    local.writeUInt16LE(0x0800, 6);
+    local.writeUInt16LE(0, 8);
+    local.writeUInt16LE(time, 10);
+    local.writeUInt16LE(date, 12);
+    local.writeUInt32LE(crc, 14);
+    local.writeUInt32LE(data.length, 18);
+    local.writeUInt32LE(data.length, 22);
+    local.writeUInt16LE(name.length, 26);
+    local.writeUInt16LE(0, 28);
+    name.copy(local, 30);
+
+    const centralHeader = Buffer.alloc(46 + name.length);
+    centralHeader.writeUInt32LE(0x02014b50, 0);
+    centralHeader.writeUInt16LE(20, 4);
+    centralHeader.writeUInt16LE(20, 6);
+    centralHeader.writeUInt16LE(0x0800, 8);
+    centralHeader.writeUInt16LE(0, 10);
+    centralHeader.writeUInt16LE(time, 12);
+    centralHeader.writeUInt16LE(date, 14);
+    centralHeader.writeUInt32LE(crc, 16);
+    centralHeader.writeUInt32LE(data.length, 20);
+    centralHeader.writeUInt32LE(data.length, 24);
+    centralHeader.writeUInt16LE(name.length, 28);
+    centralHeader.writeUInt16LE(0, 30);
+    centralHeader.writeUInt16LE(0, 32);
+    centralHeader.writeUInt16LE(0, 34);
+    centralHeader.writeUInt16LE(0, 36);
+    centralHeader.writeUInt32LE(0, 38);
+    centralHeader.writeUInt32LE(offset, 42);
+    name.copy(centralHeader, 46);
+
+    parts.push(local, data);
+    central.push(centralHeader);
+    offset += local.length + data.length;
+  }
+
+  const centralSize = central.reduce((sum, item) => sum + item.length, 0);
+  const end = Buffer.alloc(22);
+  end.writeUInt32LE(0x06054b50, 0);
+  end.writeUInt16LE(0, 4);
+  end.writeUInt16LE(0, 6);
+  end.writeUInt16LE(entries.length, 8);
+  end.writeUInt16LE(entries.length, 10);
+  end.writeUInt32LE(centralSize, 12);
+  end.writeUInt32LE(offset, 16);
+  end.writeUInt16LE(0, 20);
+
+  return Buffer.concat([...parts, ...central, end]);
+}
+
+async function buildExportManifest() {
+  const files = state.files.map(serializeFile);
+  const messages = [];
+  for (const file of state.files.filter((item) => item.source === "text-note" && !item.deletedAt)) {
+    messages.push({
+      id: file.id,
+      text: await getTextNoteContent(file),
+      createdAt: file.uploadedAt,
+      updatedAt: file.updatedAt,
+      deviceName: file.deviceName || "未命名设备",
+      favorite: Boolean(file.favorite),
+    });
+  }
+
+  return {
+    exportedAt: nowIso(),
+    storage: storage.mode,
+    stats: getStats(),
+    files,
+    messages,
+  };
+}
+
 async function handleApi(req, res, url) {
   const pathname = url.pathname;
 
+  if (req.method === "GET" && pathname === "/api/auth/status") {
+    sendJson(res, 200, authPayload(req));
+    return true;
+  }
+
+  if (req.method === "POST" && pathname === "/api/auth/unlock") {
+    const body = await readJsonBody(req);
+    const code = String(body.code || "").trim();
+    if (!ACCESS_CODE || code === ACCESS_CODE) {
+      sendJson(res, 200, { ok: true, token: ACCESS_TOKEN }, { "Set-Cookie": authCookie(ACCESS_TOKEN) });
+      return true;
+    }
+    sendJson(res, 401, { error: "访问码不正确" });
+    return true;
+  }
+
+  if (req.method === "POST" && pathname === "/api/auth/lock") {
+    sendJson(res, 200, { ok: true }, { "Set-Cookie": authCookie("", 0) });
+    return true;
+  }
+
+  if (pathname.startsWith("/api/") && !isAuthorized(req)) {
+    sendJson(res, 401, { error: "仓库已锁定", auth: authPayload(req) });
+    return true;
+  }
+
   if (req.method === "GET" && pathname === "/api/health") {
     sendJson(res, 200, { ok: true, time: nowIso(), stats: getStats(), storage: storage.mode });
+    return true;
+  }
+
+  if (req.method === "GET" && pathname === "/api/export/manifest") {
+    const manifest = await buildExportManifest();
+    sendJson(res, 200, manifest, {
+      "Content-Disposition": `attachment; filename*=UTF-8''${encodeURIComponent(`vault-manifest-${Date.now()}.json`)}`,
+    });
     return true;
   }
 
@@ -555,11 +779,13 @@ async function handleApi(req, res, url) {
     }
 
     if (action === "download") {
+      markFileAccess(file);
       await sendStoredFile(res, file, "attachment");
       return true;
     }
 
     if (action === "preview") {
+      if (url.searchParams.get("thumb") !== "1") markFileAccess(file);
       await sendStoredFile(res, file, "inline");
       return true;
     }
@@ -616,7 +842,42 @@ async function handleApi(req, res, url) {
     return false;
   }
 
-  if (req.method === "POST" && pathname.startsWith("/api/files/")) {
+  if (req.method === "POST" && pathname === "/api/files/bulk-download") {
+    const body = await readJsonBody(req);
+    const ids = Array.isArray(body.ids) ? body.ids.slice(0, 200) : [];
+    const used = new Set();
+    const entries = [];
+
+    for (const id of ids) {
+      const file = getFileById(id);
+      if (!file || file.deletedAt) continue;
+      const exists = await objectExists(file);
+      if (!exists) continue;
+      const data = await readStoredFileBuffer(file);
+      markFileAccess(file);
+      entries.push({
+        name: uniqueArchiveName(file, used),
+        data,
+        date: file.uploadedAt,
+      });
+    }
+
+    if (!entries.length) {
+      sendJson(res, 400, { error: "No downloadable files selected" });
+      return true;
+    }
+
+    const zip = buildZip(entries);
+    res.writeHead(200, {
+      "Content-Type": "application/zip",
+      "Content-Length": zip.length,
+      "Content-Disposition": `attachment; filename*=UTF-8''${encodeURIComponent(`vault-selected-${Date.now()}.zip`)}`,
+    });
+    res.end(zip);
+    return true;
+  }
+
+  if (req.method === "POST" && pathname.startsWith("/api/files/") && !pathname.startsWith("/api/files/bulk-")) {
     const parts = pathname.split("/").filter(Boolean);
     const id = parts[2];
     const action = parts[3];
@@ -673,25 +934,30 @@ async function handleApi(req, res, url) {
 
   if (req.method === "GET" && pathname === "/api/text-notes") {
     const limit = Math.min(500, Math.max(1, Number(url.searchParams.get("limit")) || 200));
+    const q = String(url.searchParams.get("q") || "").trim().toLowerCase();
     const records = state.files
       .filter((file) => file.source === "text-note" && !file.deletedAt)
-      .sort((a, b) => new Date(a.uploadedAt).getTime() - new Date(b.uploadedAt).getTime())
-      .slice(-limit);
+      .sort((a, b) => new Date(a.uploadedAt).getTime() - new Date(b.uploadedAt).getTime());
 
     const messages = [];
     for (const file of records) {
+      const text = await getTextNoteContent(file);
+      const haystack = [text, file.originalName, file.deviceName, ...(file.tags || [])].join(" ").toLowerCase();
+      if (q && !haystack.includes(q)) continue;
       messages.push({
         id: file.id,
-        text: await getTextNoteContent(file),
+        text,
         createdAt: file.uploadedAt,
         updatedAt: file.updatedAt,
         deviceName: file.deviceName || "未命名设备",
         size: file.size || 0,
         originalName: file.originalName,
+        favorite: Boolean(file.favorite),
+        accessCount: Number(file.accessCount || 0),
       });
     }
 
-    sendJson(res, 200, { messages });
+    sendJson(res, 200, { messages: messages.slice(-limit) });
     return true;
   }
 
@@ -734,7 +1000,7 @@ async function handleApi(req, res, url) {
         updatedAt: nowIso(),
         deviceName: String(body.deviceName || "未命名设备").slice(0, 120),
         source: "text-note",
-        note: typeof body.note === "string" ? body.note.slice(0, 5000) : "文本快存",
+        note: typeof body.note === "string" ? body.note.slice(0, 5000) : "对话记录",
         tags: parseTags(body.tags).slice(0, 30),
         textContent: text,
         favorite: false,

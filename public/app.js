@@ -8,6 +8,8 @@ const appState = {
     size: 0,
     favorites: 0,
     trash: 0,
+    messages: 0,
+    recent: 0,
     counts: {},
   },
   health: {
@@ -22,16 +24,23 @@ const appState = {
   activeFileId: null,
   activeTextContent: null,
   textMessages: [],
+  textQuery: "",
   deviceName: localStorage.getItem("vaultDeviceName") || "",
   uploadQueue: [],
   uploading: false,
+  appStarted: false,
   layoutEditing: false,
   layoutUpdatedAt: null,
   layoutSyncTimer: null,
   searchTimer: null,
+  textSearchTimer: null,
 };
 
 const elements = {
+  authGate: document.getElementById("authGate"),
+  accessCodeInput: document.getElementById("accessCodeInput"),
+  unlockVaultBtn: document.getElementById("unlockVaultBtn"),
+  authError: document.getElementById("authError"),
   statTotal: document.getElementById("statTotal"),
   statSize: document.getElementById("statSize"),
   statFav: document.getElementById("statFav"),
@@ -55,11 +64,15 @@ const elements = {
   batchDownloadBtnMirror: document.getElementById("batchDownloadBtnMirror"),
   batchDeleteBtn: document.getElementById("batchDeleteBtn"),
   batchDeleteBtnMirror: document.getElementById("batchDeleteBtnMirror"),
+  exportManifestBtn: document.getElementById("exportManifestBtn"),
+  lockVaultBtn: document.getElementById("lockVaultBtn"),
   dropZone: document.getElementById("dropZone"),
   textComposer: document.getElementById("textComposer"),
   messageForm: document.getElementById("messageForm"),
   messageList: document.getElementById("messageList"),
   messageEmpty: document.getElementById("messageEmpty"),
+  messageCount: document.getElementById("messageCount"),
+  messageSearchInput: document.getElementById("messageSearchInput"),
   textNoteInput: document.getElementById("textNoteInput"),
   textNoteCount: document.getElementById("textNoteCount"),
   saveTextNoteBtn: document.getElementById("saveTextNoteBtn"),
@@ -102,6 +115,7 @@ const typeTabs = [
   { key: "text", label: "文本" },
   { key: "other", label: "其他" },
   { key: "favorite", label: "收藏" },
+  { key: "recent", label: "最近" },
   { key: "trash", label: "回收站" },
 ];
 
@@ -124,12 +138,21 @@ const groupAccents = {
 boot();
 
 async function boot() {
-  elements.deviceName.value = appState.deviceName;
-  elements.orderBtn.textContent = "倒序";
   bindEvents();
   startClock();
   startPointerEffects();
   startRevealObserver();
+  registerServiceWorker();
+  const authorized = await checkVaultAccess();
+  if (!authorized) return;
+  await startApp();
+}
+
+async function startApp() {
+  if (appState.appStarted) return;
+  appState.appStarted = true;
+  elements.deviceName.value = appState.deviceName;
+  elements.orderBtn.textContent = "倒序";
   setupLayoutEditing();
   await syncLayoutFromServer(true);
   startLayoutSync();
@@ -141,7 +164,67 @@ async function boot() {
   await loadTextMessages();
 }
 
+async function checkVaultAccess() {
+  try {
+    const payload = await apiJson("/api/auth/status", { skipAuthRedirect: true });
+    if (!payload.locked || payload.authorized) {
+      hideAuthGate();
+      return true;
+    }
+  } catch (error) {
+    // If the auth status endpoint is unavailable, keep the gate visible instead of leaking API calls.
+  }
+  showAuthGate();
+  return false;
+}
+
+function showAuthGate(message = "") {
+  elements.authGate.classList.remove("hidden");
+  elements.authError.textContent = message;
+  requestAnimationFrame(() => elements.accessCodeInput.focus());
+}
+
+function hideAuthGate() {
+  elements.authGate.classList.add("hidden");
+  elements.authError.textContent = "";
+}
+
+async function unlockVault() {
+  const code = elements.accessCodeInput.value.trim();
+  if (!code) {
+    showAuthGate("请输入访问码");
+    return;
+  }
+
+  elements.unlockVaultBtn.disabled = true;
+  try {
+    const payload = await apiJson("/api/auth/unlock", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ code }),
+      skipAuthRedirect: true,
+    });
+    if (payload.token) localStorage.setItem("vaultAccessToken", payload.token);
+    hideAuthGate();
+    await startApp();
+  } catch (error) {
+    showAuthGate("访问码不正确");
+  } finally {
+    elements.unlockVaultBtn.disabled = false;
+  }
+}
+
 function bindEvents() {
+  elements.unlockVaultBtn.addEventListener("click", () => {
+    void unlockVault();
+  });
+
+  elements.accessCodeInput.addEventListener("keydown", (event) => {
+    if (event.key !== "Enter") return;
+    event.preventDefault();
+    void unlockVault();
+  });
+
   elements.searchInput.addEventListener("input", async (event) => {
     appState.query = event.target.value.trim();
     window.clearTimeout(appState.searchTimer);
@@ -178,6 +261,8 @@ function bindEvents() {
   elements.batchDownloadBtnMirror.addEventListener("click", downloadSelectedFiles);
   elements.batchDeleteBtn.addEventListener("click", deleteSelectedFiles);
   elements.batchDeleteBtnMirror.addEventListener("click", deleteSelectedFiles);
+  elements.exportManifestBtn.addEventListener("click", exportManifest);
+  elements.lockVaultBtn.addEventListener("click", lockVault);
   elements.closePreviewBtn.addEventListener("click", closePreview);
   elements.saveMetaBtn.addEventListener("click", saveActiveMetadata);
   elements.favoriteBtn.addEventListener("click", toggleActiveFavorite);
@@ -204,6 +289,13 @@ function bindEvents() {
   elements.refreshMessagesBtn.addEventListener("click", () => {
     void loadTextMessages();
   });
+  elements.messageSearchInput.addEventListener("input", (event) => {
+    appState.textQuery = event.target.value.trim();
+    window.clearTimeout(appState.textSearchTimer);
+    appState.textSearchTimer = window.setTimeout(() => {
+      void loadTextMessages();
+    }, 180);
+  });
   elements.messageList.addEventListener("click", (event) => {
     const copyButton = event.target.closest("[data-message-copy]");
     if (copyButton) {
@@ -213,6 +305,18 @@ function bindEvents() {
           .then(() => toast("消息已复制"))
           .catch(() => toast("复制失败，请重试"));
       }
+      return;
+    }
+
+    const favoriteButton = event.target.closest("[data-message-favorite]");
+    if (favoriteButton) {
+      void toggleMessageFavorite(favoriteButton.dataset.messageFavorite);
+      return;
+    }
+
+    const deleteButton = event.target.closest("[data-message-delete]");
+    if (deleteButton) {
+      void deleteMessage(deleteButton.dataset.messageDelete);
       return;
     }
 
@@ -247,6 +351,8 @@ function bindEvents() {
   document.addEventListener("keydown", (event) => {
     if (event.key === "Escape") closePreview();
   });
+
+  document.addEventListener("paste", handleClipboardPaste);
 
   document.addEventListener("visibilitychange", () => {
     if (!document.hidden && !appState.layoutEditing) {
@@ -566,6 +672,7 @@ function renderTabs() {
 function getTabCount(key) {
   if (key === "all") return appState.stats.total || 0;
   if (key === "favorite") return appState.stats.favorites || 0;
+  if (key === "recent") return appState.stats.recent || 0;
   if (key === "trash") return appState.stats.trash || 0;
   return (appState.stats.counts && appState.stats.counts[key]) || 0;
 }
@@ -586,6 +693,8 @@ async function refreshFiles() {
     size: 0,
     favorites: 0,
     trash: 0,
+    messages: 0,
+    recent: 0,
     counts: {},
     ...(data.stats || {}),
   };
@@ -600,7 +709,11 @@ async function refreshFiles() {
 
 async function loadTextMessages() {
   try {
-    const payload = await apiJson("/api/text-notes?limit=200");
+    const params = new URLSearchParams({
+      limit: "200",
+      q: appState.textQuery,
+    });
+    const payload = await apiJson(`/api/text-notes?${params.toString()}`);
     appState.textMessages = Array.isArray(payload.messages) ? payload.messages : [];
   } catch (error) {
     appState.textMessages = [];
@@ -610,6 +723,7 @@ async function loadTextMessages() {
 
 function renderTextMessages() {
   elements.messageList.innerHTML = "";
+  elements.messageCount.textContent = `${appState.textMessages.length} 条`;
   elements.messageEmpty.classList.toggle("hidden", appState.textMessages.length > 0);
 
   if (!appState.textMessages.length) {
@@ -646,14 +760,33 @@ function renderTextMessages() {
     meta.textContent = `${formatMessageTime(message.createdAt)} · ${message.deviceName || "当前设备"}`;
     bubble.appendChild(meta);
 
+    const actions = document.createElement("div");
+    actions.className = "messageActions";
+
     const copy = document.createElement("button");
     copy.type = "button";
-    copy.className = "messageCopy";
+    copy.className = "messageAction";
     copy.dataset.messageCopy = message.id;
     copy.textContent = "复制";
 
+    const favorite = document.createElement("button");
+    favorite.type = "button";
+    favorite.className = `messageAction ${message.favorite ? "is-active" : ""}`;
+    favorite.dataset.messageFavorite = message.id;
+    favorite.textContent = message.favorite ? "已收藏" : "收藏";
+
+    const remove = document.createElement("button");
+    remove.type = "button";
+    remove.className = "messageAction messageAction--danger";
+    remove.dataset.messageDelete = message.id;
+    remove.textContent = "删除";
+
+    actions.appendChild(copy);
+    actions.appendChild(favorite);
+    actions.appendChild(remove);
+
     row.appendChild(bubble);
-    row.appendChild(copy);
+    row.appendChild(actions);
     elements.messageList.appendChild(row);
   }
 
@@ -666,22 +799,11 @@ function filterFilesForView() {
   return appState.files.filter((file) => {
     if (appState.activeType === "favorite") return file.favorite && !file.deletedAt;
     if (appState.activeType === "trash") return Boolean(file.deletedAt);
+    if (appState.activeType === "recent") return Boolean(file.lastAccessedAt) && !file.deletedAt;
     if (file.deletedAt) return false;
     if (appState.activeType !== "all" && file.group !== appState.activeType) return false;
 
-    if (!appState.query) return true;
-
-    const haystack = [
-      file.originalName,
-      file.note,
-      ...(file.tags || []),
-      file.deviceName,
-      file.groupLabel,
-    ]
-      .join(" ")
-      .toLowerCase();
-
-    return haystack.includes(appState.query.toLowerCase());
+    return true;
   });
 }
 
@@ -735,7 +857,17 @@ function renderFileList() {
     const accent = groupAccents[file.group] || groupAccents.other;
     card.style.setProperty("--accent", accent);
 
-    icon.textContent = groupIcons[file.group] || groupIcons.other;
+    icon.innerHTML = "";
+    icon.classList.toggle("fileCard__icon--thumb", file.group === "image");
+    if (file.group === "image" && !file.deletedAt) {
+      const img = document.createElement("img");
+      img.src = `/api/files/${file.id}/preview?thumb=1`;
+      img.alt = "";
+      img.loading = "lazy";
+      icon.appendChild(img);
+    } else {
+      icon.textContent = groupIcons[file.group] || groupIcons.other;
+    }
     title.textContent = file.originalName;
     meta.textContent = [
       formatDate(file.uploadedAt),
@@ -850,7 +982,7 @@ async function renderPreviewMedia(file) {
 
     const pre = document.createElement("pre");
     try {
-      const response = await fetch(`/api/files/${file.id}/preview`);
+      const response = await authFetch(`/api/files/${file.id}/preview`);
       const text = await response.text();
       pre.textContent = text.slice(0, 20000) || "(空文件)";
       if (appState.activeFileId === file.id) {
@@ -900,7 +1032,8 @@ async function saveTextNote() {
       body: JSON.stringify({
         text,
         deviceName: appState.deviceName || "浏览器文本框",
-        tags: ["文本快存"],
+        note: "对话记录",
+        tags: ["对话记录"],
       }),
     });
 
@@ -945,6 +1078,57 @@ async function copyText(text) {
   textarea.select();
   document.execCommand("copy");
   textarea.remove();
+}
+
+async function toggleMessageFavorite(messageId) {
+  const message = appState.textMessages.find((item) => item.id === messageId);
+  if (!message) return;
+
+  await apiJson(`/api/files/${message.id}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ favorite: !message.favorite }),
+  });
+
+  toast(message.favorite ? "已取消收藏" : "消息已收藏");
+  await refreshFiles();
+  await loadTextMessages();
+}
+
+async function deleteMessage(messageId) {
+  const message = appState.textMessages.find((item) => item.id === messageId);
+  if (!message) return;
+  if (!window.confirm("确定删除这条对话记录吗？")) return;
+
+  await apiJson(`/api/files/${message.id}`, { method: "DELETE" });
+  toast("对话记录已删除");
+  await refreshFiles();
+  await loadTextMessages();
+}
+
+async function handleClipboardPaste(event) {
+  const target = event.target;
+  const isEditable = target?.closest?.("input, textarea, [contenteditable='true']");
+  if (isEditable) return;
+
+  const clipboard = event.clipboardData;
+  if (!clipboard) return;
+
+  const files = Array.from(clipboard.files || []);
+  if (files.length) {
+    event.preventDefault();
+    await queueFiles(files);
+    toast(`已从剪贴板加入 ${files.length} 个文件`);
+    return;
+  }
+
+  const text = clipboard.getData("text/plain");
+  if (!text.trim()) return;
+
+  event.preventDefault();
+  elements.textNoteInput.value = text.trimEnd();
+  updateTextNoteCount();
+  await saveTextNote();
 }
 
 async function saveActiveMetadata() {
@@ -1108,7 +1292,7 @@ async function uploadFileWithChunks(item, forceFresh = false) {
     const chunk = file.slice(start, end);
 
     for (let attempt = 0; attempt < 3; attempt += 1) {
-      const response = await fetch(`/api/uploads/${session.uploadId}/chunks/${index}`, {
+      const response = await authFetch(`/api/uploads/${session.uploadId}/chunks/${index}`, {
         method: "POST",
         headers: { "Content-Type": "application/octet-stream" },
         body: chunk,
@@ -1139,7 +1323,7 @@ async function uploadFileWithChunks(item, forceFresh = false) {
     }
   }
 
-  const completeResponse = await fetch(`/api/uploads/${session.uploadId}/complete`, {
+  const completeResponse = await authFetch(`/api/uploads/${session.uploadId}/complete`, {
     method: "POST",
   });
 
@@ -1161,7 +1345,7 @@ async function getUploadSession(file, fingerprint, chunkSize, forceFresh = false
   if (!forceFresh) {
     const savedSession = loadLocalUploadSession(fingerprint);
     if (savedSession && savedSession.name === file.name && savedSession.size === file.size) {
-      const statusResponse = await fetch(`/api/uploads/${savedSession.uploadId}/status`);
+      const statusResponse = await authFetch(`/api/uploads/${savedSession.uploadId}/status`);
       if (statusResponse.ok) {
         const payload = await safeJson(statusResponse);
         const serverSession = payload.session || {};
@@ -1185,7 +1369,7 @@ async function getUploadSession(file, fingerprint, chunkSize, forceFresh = false
     clearLocalUploadSession(fingerprint);
   }
 
-  const initResponse = await fetch("/api/uploads/init", {
+  const initResponse = await authFetch("/api/uploads/init", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -1240,12 +1424,28 @@ async function downloadSelectedFiles() {
     return;
   }
 
-  for (const id of ids) {
-    triggerDownload(`/api/files/${id}/download`);
-    await wait(180);
+  if (ids.length === 1) {
+    triggerDownload(`/api/files/${ids[0]}/download`);
+    toast("已发起下载任务");
+    return;
   }
 
-  toast(`已发起 ${ids.length} 个下载任务`);
+  try {
+    const response = await authFetch("/api/files/bulk-download", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ids }),
+    });
+    if (!response.ok) {
+      const payload = await safeJson(response);
+      throw new Error(payload.error || "批量下载失败");
+    }
+    const blob = await response.blob();
+    triggerBlobDownload(blob, `vault-selected-${Date.now()}.zip`);
+    toast(`已打包 ${ids.length} 个文件`);
+  } catch (error) {
+    toast("批量下载失败，请重试");
+  }
 }
 
 async function deleteSelectedFiles() {
@@ -1268,6 +1468,31 @@ async function deleteSelectedFiles() {
   await refreshFiles();
 }
 
+async function exportManifest() {
+  try {
+    const response = await authFetch("/api/export/manifest");
+    if (!response.ok) {
+      const payload = await safeJson(response);
+      throw new Error(payload.error || "导出失败");
+    }
+    const blob = await response.blob();
+    triggerBlobDownload(blob, `vault-manifest-${Date.now()}.json`);
+    toast("仓库清单已导出");
+  } catch (error) {
+    toast("导出失败，请重试");
+  }
+}
+
+async function lockVault() {
+  localStorage.removeItem("vaultAccessToken");
+  try {
+    await apiJson("/api/auth/lock", { method: "POST", skipAuthRedirect: true });
+  } catch (error) {
+    // Local token removal is enough for the current browser even if the server is unreachable.
+  }
+  window.location.reload();
+}
+
 function getActiveFile(fileId = appState.activeFileId) {
   return appState.files.find((file) => file.id === fileId) || null;
 }
@@ -1282,13 +1507,49 @@ function triggerDownload(url) {
   link.remove();
 }
 
+function triggerBlobDownload(blob, name) {
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = name;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  window.setTimeout(() => URL.revokeObjectURL(url), 1200);
+}
+
+function authHeaders(headers = {}) {
+  const next = new Headers(headers);
+  const token = localStorage.getItem("vaultAccessToken");
+  if (token && !next.has("X-Vault-Token")) next.set("X-Vault-Token", token);
+  return next;
+}
+
+function authFetch(url, options = {}) {
+  return fetch(url, {
+    ...options,
+    headers: authHeaders(options.headers),
+  });
+}
+
 async function apiJson(url, options = {}) {
-  const response = await fetch(url, options);
+  const { skipAuthRedirect = false, ...fetchOptions } = options;
+  const response = await authFetch(url, fetchOptions);
   if (!response.ok) {
     const payload = await safeJson(response);
+    if (response.status === 401 && !skipAuthRedirect) {
+      showAuthGate(payload.error || "仓库已锁定，请重新输入访问码");
+    }
     throw new Error(payload.error || `Request failed: ${response.status}`);
   }
   return response.json();
+}
+
+function registerServiceWorker() {
+  if (!("serviceWorker" in navigator)) return;
+  window.addEventListener("load", () => {
+    navigator.serviceWorker.register("/service-worker.js").catch(() => {});
+  });
 }
 
 async function safeJson(response) {
