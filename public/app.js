@@ -34,6 +34,7 @@ const appState = {
   layoutSyncTimer: null,
   searchTimer: null,
   textSearchTimer: null,
+  textSyncTimer: null,
 };
 
 const elements = {
@@ -162,6 +163,7 @@ async function startApp() {
   await loadHealth();
   await refreshFiles();
   await loadTextMessages();
+  startTextMessageSync();
 }
 
 async function checkVaultAccess() {
@@ -525,6 +527,15 @@ function startLayoutSync() {
   }, layoutSyncIntervalMs);
 }
 
+function startTextMessageSync() {
+  if (appState.textSyncTimer) return;
+
+  appState.textSyncTimer = window.setInterval(() => {
+    if (document.hidden || !appState.appStarted) return;
+    void loadTextMessages({ preserveScroll: true });
+  }, 2500);
+}
+
 async function syncLayoutFromServer(force = false) {
   try {
     const payload = await apiJson("/api/layout");
@@ -707,7 +718,9 @@ async function refreshFiles() {
   updatePreview();
 }
 
-async function loadTextMessages() {
+async function loadTextMessages(options = {}) {
+  const wasNearBottom =
+    elements.messageList.scrollHeight - elements.messageList.scrollTop - elements.messageList.clientHeight < 80;
   try {
     const params = new URLSearchParams({
       limit: "200",
@@ -718,10 +731,10 @@ async function loadTextMessages() {
   } catch (error) {
     appState.textMessages = [];
   }
-  renderTextMessages();
+  renderTextMessages({ preserveScroll: options.preserveScroll && !wasNearBottom });
 }
 
-function renderTextMessages() {
+function renderTextMessages(options = {}) {
   elements.messageList.innerHTML = "";
   elements.messageCount.textContent = `${appState.textMessages.length} 条`;
   elements.messageEmpty.classList.toggle("hidden", appState.textMessages.length > 0);
@@ -790,9 +803,11 @@ function renderTextMessages() {
     elements.messageList.appendChild(row);
   }
 
-  requestAnimationFrame(() => {
-    elements.messageList.scrollTop = elements.messageList.scrollHeight;
-  });
+  if (!options.preserveScroll) {
+    requestAnimationFrame(() => {
+      elements.messageList.scrollTop = elements.messageList.scrollHeight;
+    });
+  }
 }
 
 function filterFilesForView() {
