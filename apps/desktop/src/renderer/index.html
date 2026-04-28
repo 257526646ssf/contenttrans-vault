@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Vault One Desk</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <main class="app">
+      <section id="authView" class="authView">
+        <div class="brand">
+          <span>V1</span>
+          <div>
+            <small>Vault One Desk</small>
+            <strong>桌面浮窗</strong>
+          </div>
+        </div>
+        <h1>输入访问码</h1>
+        <p>通过后窗口会保持置顶，直接发消息、复制文本、上传和下载文件。</p>
+        <input id="accessCodeInput" type="password" inputmode="numeric" placeholder="访问码" />
+        <button id="unlockBtn" class="primary">进入仓库</button>
+        <div id="authError" class="error"></div>
+      </section>
+
+      <section id="mainView" class="mainView hidden">
+        <header class="topbar">
+          <div class="brand brand--compact">
+            <span>V1</span>
+            <div>
+              <small id="serverHint">Vault One</small>
+              <strong>快捷仓库</strong>
+            </div>
+          </div>
+          <div class="topbar__actions">
+            <button id="pinBtn" class="iconBtn" title="切换置顶">置顶</button>
+            <button id="openWebBtn" class="iconBtn" title="打开网页版">网页</button>
+          </div>
+        </header>
+
+        <label class="field">
+          <span>设备名</span>
+          <input id="deviceNameInput" type="text" placeholder="Windows 桌面端" />
+        </label>
+
+        <section class="chat">
+          <div class="sectionHead">
+            <div>
+              <small>Conversation</small>
+              <h2>对话记录</h2>
+            </div>
+            <input id="messageSearchInput" type="search" placeholder="搜索" />
+          </div>
+          <div id="messageList" class="messageList"></div>
+          <form id="messageForm" class="composer">
+            <textarea id="messageInput" rows="3" placeholder="输入内容，Enter 发送，Shift+Enter 换行"></textarea>
+            <button id="sendBtn" class="primary" type="submit">发送</button>
+          </form>
+        </section>
+
+        <section class="files">
+          <div class="sectionHead">
+            <div>
+              <small>Files</small>
+              <h2>文件快取</h2>
+            </div>
+            <input id="fileSearchInput" type="search" placeholder="搜文件" />
+          </div>
+          <div class="fileActions">
+            <button id="uploadBtn" class="primary" type="button">上传文件</button>
+            <button id="refreshFilesBtn" class="ghost" type="button">刷新</button>
+          </div>
+          <div id="uploadStatus" class="uploadStatus"></div>
+          <div id="fileList" class="fileList"></div>
+        </section>
+
+        <footer>
+          <button id="lockBtn" class="ghost" type="button">锁定</button>
+          <span id="syncHint">同步中</span>
+        </footer>
+      </section>
+    </main>
+
+    <script src="./renderer.js"></script>
+  </body>
+</html>

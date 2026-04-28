@@ -1,7 +1,13 @@
 node_modules/
 data/
 storage/
+dist/
+build/
+.gradle/
+local.properties
 .npm-cache/
+apps/desktop/dist/
+apps/android/app/build/
 _automation/
 _chrome_automation/
 server.out.log

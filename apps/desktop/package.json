@@ -1,0 +1,43 @@
+{
+  "name": "vault-one-desktop",
+  "version": "1.0.0",
+  "description": "Always-on-top Windows quick panel for Vault One.",
+  "main": "src/main.js",
+  "type": "commonjs",
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder --win nsis"
+  },
+  "devDependencies": {
+    "electron": "^39.2.5",
+    "electron-builder": "^26.0.12"
+  },
+  "build": {
+    "appId": "com.vaultone.desktop",
+    "productName": "Vault One Desk",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "src/**/*",
+      "package.json"
+    ],
+    "win": {
+      "signAndEditExecutable": false,
+      "verifyUpdateCodeSignature": false,
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "artifactName": "VaultOne-Desktop-Setup-${version}-${arch}.${ext}"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true
+    }
+  }
+}
