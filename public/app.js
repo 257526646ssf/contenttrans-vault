@@ -39,9 +39,6 @@ const appState = {
 
 const elements = {
   authGate: document.getElementById("authGate"),
-  accessCodeInput: document.getElementById("accessCodeInput"),
-  unlockVaultBtn: document.getElementById("unlockVaultBtn"),
-  authError: document.getElementById("authError"),
   statTotal: document.getElementById("statTotal"),
   statSize: document.getElementById("statSize"),
   statFav: document.getElementById("statFav"),
@@ -144,8 +141,7 @@ async function boot() {
   startPointerEffects();
   startRevealObserver();
   registerServiceWorker();
-  const authorized = await checkVaultAccess();
-  if (!authorized) return;
+  hideAuthGate();
   await startApp();
 }
 
@@ -167,66 +163,29 @@ async function startApp() {
 }
 
 async function checkVaultAccess() {
-  try {
-    const payload = await apiJson("/api/auth/status", { skipAuthRedirect: true });
-    if (!payload.locked || payload.authorized) {
-      hideAuthGate();
-      return true;
-    }
-  } catch (error) {
-    // If the auth status endpoint is unavailable, keep the gate visible instead of leaking API calls.
-  }
-  showAuthGate();
-  return false;
+  hideAuthGate();
+  return true;
 }
 
 function showAuthGate(message = "") {
-  elements.authGate.classList.remove("hidden");
-  elements.authError.textContent = message;
-  requestAnimationFrame(() => elements.accessCodeInput.focus());
+  hideAuthGate();
 }
 
 function hideAuthGate() {
   elements.authGate.classList.add("hidden");
-  elements.authError.textContent = "";
 }
 
 async function unlockVault() {
-  const code = elements.accessCodeInput.value.trim();
-  if (!code) {
-    showAuthGate("请输入访问码");
-    return;
-  }
-
-  elements.unlockVaultBtn.disabled = true;
   try {
-    const payload = await apiJson("/api/auth/unlock", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ code }),
-      skipAuthRedirect: true,
-    });
-    if (payload.token) localStorage.setItem("vaultAccessToken", payload.token);
+    localStorage.removeItem("vaultAccessToken");
     hideAuthGate();
     await startApp();
   } catch (error) {
-    showAuthGate("访问码不正确");
-  } finally {
-    elements.unlockVaultBtn.disabled = false;
+    showAuthGate("");
   }
 }
 
 function bindEvents() {
-  elements.unlockVaultBtn.addEventListener("click", () => {
-    void unlockVault();
-  });
-
-  elements.accessCodeInput.addEventListener("keydown", (event) => {
-    if (event.key !== "Enter") return;
-    event.preventDefault();
-    void unlockVault();
-  });
-
   elements.searchInput.addEventListener("input", async (event) => {
     appState.query = event.target.value.trim();
     window.clearTimeout(appState.searchTimer);
@@ -1500,12 +1459,8 @@ async function exportManifest() {
 
 async function lockVault() {
   localStorage.removeItem("vaultAccessToken");
-  try {
-    await apiJson("/api/auth/lock", { method: "POST", skipAuthRedirect: true });
-  } catch (error) {
-    // Local token removal is enough for the current browser even if the server is unreachable.
-  }
-  window.location.reload();
+  await Promise.all([loadHealth(), refreshFiles(), loadTextMessages(), syncLayoutFromServer(true)]);
+  toast("已刷新");
 }
 
 function getActiveFile(fileId = appState.activeFileId) {
@@ -1534,10 +1489,7 @@ function triggerBlobDownload(blob, name) {
 }
 
 function authHeaders(headers = {}) {
-  const next = new Headers(headers);
-  const token = localStorage.getItem("vaultAccessToken");
-  if (token && !next.has("X-Vault-Token")) next.set("X-Vault-Token", token);
-  return next;
+  return new Headers(headers);
 }
 
 function authFetch(url, options = {}) {
@@ -1552,9 +1504,6 @@ async function apiJson(url, options = {}) {
   const response = await authFetch(url, fetchOptions);
   if (!response.ok) {
     const payload = await safeJson(response);
-    if (response.status === 401 && !skipAuthRedirect) {
-      showAuthGate(payload.error || "仓库已锁定，请重新输入访问码");
-    }
     throw new Error(payload.error || `Request failed: ${response.status}`);
   }
   return response.json();

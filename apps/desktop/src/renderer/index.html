@@ -8,20 +8,7 @@
   </head>
   <body>
     <main class="app">
-      <section id="authView" class="authView">
-        <div class="brand">
-          <span>V1</span>
-          <div>
-            <small>Vault One Desk</small>
-            <strong>桌面浮窗</strong>
-          </div>
-        </div>
-        <h1>输入访问码</h1>
-        <p>通过后窗口会保持置顶，直接发消息、复制文本、上传和下载文件。</p>
-        <input id="accessCodeInput" type="password" inputmode="numeric" placeholder="访问码" />
-        <button id="unlockBtn" class="primary">进入仓库</button>
-        <div id="authError" class="error"></div>
-      </section>
+      <section id="authView" class="authView hidden" aria-hidden="true"></section>
 
       <section id="mainView" class="mainView hidden">
         <header class="topbar">
@@ -75,7 +62,7 @@
         </section>
 
         <footer>
-          <button id="lockBtn" class="ghost" type="button">锁定</button>
+          <button id="lockBtn" class="ghost" type="button">刷新</button>
           <span id="syncHint">同步中</span>
         </footer>
       </section>

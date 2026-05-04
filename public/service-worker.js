@@ -1,4 +1,4 @@
-const CACHE_NAME = "vault-one-shell-v1";
+const CACHE_NAME = "vault-one-shell-v2";
 const SHELL_ASSETS = ["/", "/styles.css", "/app.js", "/manifest.webmanifest", "/icon.svg"];
 
 self.addEventListener("install", (event) => {

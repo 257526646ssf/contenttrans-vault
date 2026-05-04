@@ -19,18 +19,7 @@
     <link rel="stylesheet" href="/styles.css" />
   </head>
   <body>
-    <div id="authGate" class="authGate hidden">
-      <div class="authGate__panel">
-        <div class="panelKicker">Private Access</div>
-        <h1>进入你的单人仓库</h1>
-        <p>这里没有账号体系，只用一次访问码确认这是你的设备。通过后浏览器会自动记住。</p>
-        <div class="authGate__form">
-          <input id="accessCodeInput" type="password" inputmode="numeric" autocomplete="current-password" placeholder="输入访问码" />
-          <button id="unlockVaultBtn" class="btn btn--primary" type="button">进入仓库</button>
-        </div>
-        <small id="authError" class="authGate__error"></small>
-      </div>
-    </div>
+    <div id="authGate" class="authGate hidden" aria-hidden="true"></div>
 
     <div class="ambient ambient--gold"></div>
     <div class="ambient ambient--cyan"></div>
@@ -192,7 +181,7 @@
           <button id="batchDownloadBtnMirror" class="btn btn--secondary">下载所选</button>
           <button id="batchDeleteBtnMirror" class="btn btn--ghost">删除所选</button>
           <button id="exportManifestBtn" class="btn btn--ghost" type="button">导出清单</button>
-          <button id="lockVaultBtn" class="btn btn--ghost" type="button">锁定</button>
+          <button id="lockVaultBtn" class="btn btn--ghost" type="button">刷新</button>
         </div>
       </section>
 

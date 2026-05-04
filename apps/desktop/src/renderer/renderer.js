@@ -1,5 +1,5 @@
 const state = {
-  authorized: false,
+  authorized: true,
   messages: [],
   files: [],
   messageQuery: "",
@@ -12,9 +12,6 @@ const $ = (id) => document.getElementById(id);
 const elements = {
   authView: $("authView"),
   mainView: $("mainView"),
-  accessCodeInput: $("accessCodeInput"),
-  unlockBtn: $("unlockBtn"),
-  authError: $("authError"),
   serverHint: $("serverHint"),
   deviceNameInput: $("deviceNameInput"),
   pinBtn: $("pinBtn"),
@@ -37,17 +34,10 @@ init();
 
 async function init() {
   bindEvents();
-  await checkAuth();
+  await enterVault();
 }
 
 function bindEvents() {
-  elements.unlockBtn.addEventListener("click", unlock);
-  elements.accessCodeInput.addEventListener("keydown", (event) => {
-    if (event.key !== "Enter") return;
-    event.preventDefault();
-    unlock();
-  });
-
   elements.messageForm.addEventListener("submit", (event) => {
     event.preventDefault();
     sendMessage();
@@ -71,7 +61,7 @@ function bindEvents() {
 
   elements.uploadBtn.addEventListener("click", uploadFiles);
   elements.refreshFilesBtn.addEventListener("click", loadFiles);
-  elements.lockBtn.addEventListener("click", lock);
+  elements.lockBtn.addEventListener("click", refreshAll);
   elements.pinBtn.addEventListener("click", toggleAlwaysOnTop);
   elements.openWebBtn.addEventListener("click", () => window.vault.openWeb());
 
@@ -84,67 +74,28 @@ function bindEvents() {
   });
 }
 
-async function checkAuth() {
+async function enterVault() {
+  elements.authView.classList.add("hidden");
+  elements.mainView.classList.remove("hidden");
+
   try {
     const status = await window.vault.authStatus();
     elements.serverHint.textContent = new URL(status.baseUrl).host;
     elements.deviceNameInput.value = status.deviceName || "Windows 桌面端";
     elements.pinBtn.textContent = status.alwaysOnTop ? "置顶中" : "置顶";
-    if (status.authorized) {
-      showMain();
-      await refreshAll();
-      startPolling();
-      return;
-    }
   } catch (error) {
-    elements.authError.textContent = "无法连接服务端，请稍后重试";
+    elements.serverHint.textContent = "连接中断";
+    elements.syncHint.textContent = "服务端连接失败";
   }
-  showAuth();
-}
 
-function showAuth() {
-  state.authorized = false;
-  elements.authView.classList.remove("hidden");
-  elements.mainView.classList.add("hidden");
-  elements.accessCodeInput.focus();
-}
-
-function showMain() {
-  state.authorized = true;
-  elements.authView.classList.add("hidden");
-  elements.mainView.classList.remove("hidden");
   elements.messageInput.focus();
-}
-
-async function unlock() {
-  const code = elements.accessCodeInput.value.trim();
-  if (!code) {
-    elements.authError.textContent = "请输入访问码";
-    return;
-  }
-
-  elements.unlockBtn.disabled = true;
-  try {
-    await window.vault.unlock(code);
-    elements.authError.textContent = "";
-    showMain();
-    await refreshAll();
-    startPolling();
-  } catch (error) {
-    elements.authError.textContent = "访问码不正确";
-  } finally {
-    elements.unlockBtn.disabled = false;
-  }
-}
-
-async function lock() {
-  await window.vault.lock();
-  clearPolling();
-  showAuth();
+  await refreshAll();
+  startPolling();
 }
 
 async function refreshAll() {
-  await Promise.all([loadMessages(), loadFiles()]);
+  await Promise.all([loadMessages(true), loadFiles()]);
+  elements.syncHint.textContent = `已刷新 ${formatTime(new Date())}`;
 }
 
 function startPolling() {
@@ -158,19 +109,25 @@ function clearPolling() {
   state.timers = [];
 }
 
-async function loadMessages() {
-  if (!state.authorized) return;
+async function loadMessages(forceBottom = false) {
   try {
     const payload = await window.vault.getMessages(state.messageQuery);
     state.messages = payload.messages || [];
-    renderMessages();
+    renderMessages({ forceBottom });
     elements.syncHint.textContent = `已同步 ${formatTime(new Date())}`;
   } catch (error) {
     elements.syncHint.textContent = "同步失败";
   }
 }
 
-function renderMessages() {
+function renderMessages({ forceBottom = false } = {}) {
+  const shouldStickToBottom =
+    forceBottom ||
+    elements.messageList.scrollHeight -
+      elements.messageList.scrollTop -
+      elements.messageList.clientHeight <
+      90;
+
   elements.messageList.innerHTML = "";
   if (!state.messages.length) {
     elements.messageList.innerHTML = '<div class="empty">暂无对话记录</div>';
@@ -194,7 +151,13 @@ function renderMessages() {
     const copy = document.createElement("button");
     copy.type = "button";
     copy.textContent = "复制";
-    copy.addEventListener("click", () => window.vault.copyText(message.text || ""));
+    copy.addEventListener("click", async () => {
+      await window.vault.copyText(message.text || "");
+      copy.textContent = "已复制";
+      setTimeout(() => {
+        copy.textContent = "复制";
+      }, 900);
+    });
     tools.appendChild(copy);
 
     item.appendChild(bubble);
@@ -203,7 +166,9 @@ function renderMessages() {
     elements.messageList.appendChild(item);
   }
 
-  elements.messageList.scrollTop = elements.messageList.scrollHeight;
+  if (shouldStickToBottom) {
+    elements.messageList.scrollTop = elements.messageList.scrollHeight;
+  }
 }
 
 async function sendMessage() {
@@ -214,14 +179,13 @@ async function sendMessage() {
   try {
     await window.vault.sendMessage(text);
     elements.messageInput.value = "";
-    await loadMessages();
+    await loadMessages(true);
   } finally {
     elements.sendBtn.disabled = false;
   }
 }
 
 async function loadFiles() {
-  if (!state.authorized) return;
   try {
     const payload = await window.vault.listFiles(state.fileQuery);
     state.files = (payload.files || []).filter((file) => file.source !== "text-note").slice(0, 30);

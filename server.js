@@ -17,9 +17,7 @@ const STATE_FILE = path.join(DATA_DIR, "vault.json");
 const UPLOAD_FILE = path.join(DATA_DIR, "uploads.json");
 const DEFAULT_CHUNK_SIZE = 5 * 1024 * 1024;
 const MAX_TEXT_NOTE_CHARS = 200000;
-const ACCESS_CODE = String(process.env.VAULT_ACCESS_CODE || "2575266469").trim();
 const ACCESS_COOKIE = "vault_access";
-const ACCESS_TOKEN = crypto.createHash("sha256").update(`vault-one:${ACCESS_CODE}`).digest("hex");
 const STORAGE_DRIVER = String(process.env.STORAGE_DRIVER || "local").trim().toLowerCase();
 const S3_REGION = String(process.env.S3_REGION || "").trim();
 const S3_ENDPOINT = String(process.env.S3_ENDPOINT || "").trim();
@@ -290,14 +288,13 @@ function getAccessToken(req) {
 }
 
 function isAuthorized(req) {
-  if (!ACCESS_CODE) return true;
-  return getAccessToken(req) === ACCESS_TOKEN;
+  return true;
 }
 
 function authPayload(req) {
   return {
-    locked: Boolean(ACCESS_CODE),
-    authorized: isAuthorized(req),
+    locked: false,
+    authorized: true,
   };
 }
 
@@ -691,23 +688,13 @@ async function handleApi(req, res, url) {
   }
 
   if (req.method === "POST" && pathname === "/api/auth/unlock") {
-    const body = await readJsonBody(req);
-    const code = String(body.code || "").trim();
-    if (!ACCESS_CODE || code === ACCESS_CODE) {
-      sendJson(res, 200, { ok: true, token: ACCESS_TOKEN }, { "Set-Cookie": authCookie(ACCESS_TOKEN) });
-      return true;
-    }
-    sendJson(res, 401, { error: "访问码不正确" });
+    await readJsonBody(req);
+    sendJson(res, 200, { ok: true, token: "" }, { "Set-Cookie": authCookie("", 0) });
     return true;
   }
 
   if (req.method === "POST" && pathname === "/api/auth/lock") {
     sendJson(res, 200, { ok: true }, { "Set-Cookie": authCookie("", 0) });
-    return true;
-  }
-
-  if (pathname.startsWith("/api/") && !isAuthorized(req)) {
-    sendJson(res, 401, { error: "仓库已锁定", auth: authPayload(req) });
     return true;
   }
 
